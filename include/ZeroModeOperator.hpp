@@ -1,0 +1,80 @@
+#pragma once
+
+#include "GeometryData.hpp"
+#include "CrossSectionManager.hpp"
+
+#include <deal.II/base/enable_observer_pointer.h>
+#include <deal.II/base/index_set.h>
+
+#include <deal.II/lac/trilinos_sparse_matrix.h>
+#include <deal.II/lac/diagonal_matrix.h>
+
+#include <deal.II/matrix_free/fe_evaluation.h>
+#include <deal.II/matrix_free/matrix_free.h>
+
+
+#include <vector>
+#include <memory>
+
+
+namespace solver {
+
+  template <unsigned int dim, typename number>
+  class ZeroModeOperator : public dealii::EnableObserverPointer {
+  public:
+    using VectorType = dealii::LinearAlgebra::distributed::Vector<number>;
+
+    ZeroModeOperator(const unsigned int p_degree, const unsigned int dof_index, const data::GeometryData &geom_data) :
+      p_degree(p_degree),
+      dof_index(dof_index),
+      geometry_data(geom_data),
+      diagonal_is_up_to_date(false)
+    {};
+
+    void clear();
+    void initialize(std::shared_ptr<const dealii::MatrixFree<dim, number>>, std::shared_ptr<const MaterialCache<number>>);
+    std::shared_ptr<const dealii::Utilities::MPI::Partitioner> get_vector_partitioner() const;
+    std::shared_ptr<const dealii::MatrixFree<dim, number>> get_matrix_free() const;
+    void initialize_dof_vector(VectorType &) const;
+    number el(const unsigned int, const unsigned int) const;
+    dealii::types::global_dof_index m() const;
+  
+    void vmult(VectorType &, const VectorType &) const;
+    void vmult_add(VectorType &, const VectorType &) const;
+    void Tvmult(VectorType &, const VectorType &) const;
+    void Tvmult_add(VectorType &, const VectorType &) const;
+    
+    void compute_matrix(dealii::TrilinosWrappers::SparseMatrix &) const;
+    void compute_diagonal();
+    std::shared_ptr<dealii::DiagonalMatrix<VectorType>> get_matrix_diagonal_inverse() const;
+
+
+  private:
+    number get_penalty_factor() const;
+    void apply_cell(const dealii::MatrixFree<dim, number> &, VectorType &, const VectorType &, const std::pair<unsigned int, unsigned int> &) const;
+    void apply_face(const dealii::MatrixFree<dim, number> &, VectorType &, const VectorType &, const std::pair<unsigned int, unsigned int> &) const;
+    void apply_boundary(const dealii::MatrixFree<dim, number> &, VectorType &, const VectorType &, const std::pair<unsigned int, unsigned int> &) const;
+
+    using FEEval = dealii::FEEvaluation<dim, -1, 0, 1, number>;
+    using FEFaceEval = dealii::FEFaceEvaluation<dim, -1, 0, 1, number>;
+    void integrate_cell_physics(FEEval &) const;
+    void integrate_cell_physics(FEEval &, const unsigned int) const;
+    void integrate_face_physics(FEFaceEval &, FEFaceEval &) const;
+    void integrate_boundary_physics(FEFaceEval &) const;
+
+    std::shared_ptr<const dealii::MatrixFree<dim, number>> data;
+
+    const unsigned int p_degree;
+    const unsigned int dof_index;
+
+    const data::GeometryData &geometry_data;
+
+    std::shared_ptr<const MaterialCache<number>> material_cache;    
+
+    std::shared_ptr<dealii::DiagonalMatrix<VectorType>> inverse_diagonal;
+    bool diagonal_is_up_to_date;
+
+  };
+
+
+}
