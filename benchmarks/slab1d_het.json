@@ -1,0 +1,48 @@
+{
+  "n_groups": 1,
+  "n_materials": 2,
+  "materials": [
+    {
+      "id": 0,
+      "name": "Fuel",
+      "diffusion": [0.80],
+      "sigma_rem": [0.082667],
+      "nu_sigma_f": [0.178],
+      "chi": [1.0],
+      "sigma_s": [
+        [0.334]
+      ],
+      "discontinuity_factors": [1.0]
+    },
+    {
+      "id": 1,
+      "name": "Reflector",
+      "diffusion": [0.9],
+      "sigma_rem": [0.03637],
+      "nu_sigma_f": [0.0],
+      "chi": [1.0],
+      "sigma_s": [
+        [0.334]
+      ],
+      "discontinuity_factors": [1.0]
+    }
+  ],
+  "geometry": {
+    "dimension": 1,
+    "pin_pitch_x": 0.3,
+    "pin_pitch_y": 0.0,
+    "assembly_height": 0.0,
+    "assemblies": {
+      "SLAB_1D" : [
+        [1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+      ]
+    },
+    "core_map": [
+      [["SLAB_1D"]]
+    ],
+    "boundary_conditions": [
+      { "type": "albedo", "value": 0.0 },
+      { "type": "albedo", "value": 0.0 }
+    ]
+  }
+}
