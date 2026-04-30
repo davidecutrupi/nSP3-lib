@@ -349,33 +349,43 @@ namespace solver {
     const auto mf_storage = sp3_operator->get_matrix_free();
     auto cache = material_manager->get_cache(0);
 
-    FEEvaluation<dim, -1, 0, 1, double> phi(*mf_storage, this->group, this->group, /* first_selected_component */ 0);
-
     const unsigned int n_batches = mf_storage->n_cell_batches();
     if (is_adjoint) {
       for (unsigned int cell_batch = 0; cell_batch < n_batches; ++cell_batch) {
-        phi.reinit(cell_batch);
+        phi0->reinit(cell_batch);
+        phi2->reinit(cell_batch);
         
-        phi.read_dof_values(adjoint_solution.block(0));
-        phi.evaluate(EvaluationFlags::values);
+        phi0->read_dof_values(adjoint_solution.block(0));
+        phi2->read_dof_values(adjoint_solution.block(1));
+
+        phi0->evaluate(EvaluationFlags::values);
+        phi2->evaluate(EvaluationFlags::values);
   
         VectorizedArray<double> cell_integral(0.0);
-        for (const unsigned int q : phi.quadrature_point_indices()) 
-          cell_integral += phi.get_value(q) * cache->fission_distribution[cell_batch] * phi.JxW(q);
+        for (const unsigned int q : phi0->quadrature_point_indices()) {
+          VectorizedArray<double> real_flux = phi0->get_value(q) - (2.0 / 3.0) * phi2->get_value(q);
+          cell_integral += real_flux * cache->fission_distribution[cell_batch] * phi0->JxW(q);
+        }
   
         local_fission_source += cell_integral.sum();
       }
     }
     else {
       for (unsigned int cell_batch = 0; cell_batch < n_batches; ++cell_batch) {
-        phi.reinit(cell_batch);
+        phi0->reinit(cell_batch);
+        phi2->reinit(cell_batch);
         
-        phi.read_dof_values(solution.block(0));
-        phi.evaluate(EvaluationFlags::values);
+        phi0->read_dof_values(solution.block(0));
+        phi2->read_dof_values(solution.block(1));
+
+        phi0->evaluate(EvaluationFlags::values);
+        phi2->evaluate(EvaluationFlags::values);
   
         VectorizedArray<double> cell_integral(0.0);
-        for (const unsigned int q : phi.quadrature_point_indices()) 
-          cell_integral += phi.get_value(q) * cache->nu_sigma_f[cell_batch] * phi.JxW(q);
+        for (const unsigned int q : phi0->quadrature_point_indices()) {
+          VectorizedArray<double> real_flux = phi0->get_value(q) - (2.0 / 3.0) * phi2->get_value(q);
+          cell_integral += real_flux * cache->nu_sigma_f[cell_batch] * phi0->JxW(q);
+        }
   
         local_fission_source += cell_integral.sum();
       }
