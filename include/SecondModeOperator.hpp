@@ -29,7 +29,7 @@ namespace solver {
     {}
 
     void clear();
-    void initialize(std::shared_ptr<const dealii::MatrixFree<dim, number>>, std::shared_ptr<const MaterialCache<number>>);
+    void initialize(std::shared_ptr<const dealii::MatrixFree<dim, number>>, std::shared_ptr<const MaterialCache<number>>, const data::MaterialData &);
     std::shared_ptr<const dealii::Utilities::MPI::Partitioner> get_vector_partitioner() const;
     std::shared_ptr<const dealii::MatrixFree<dim, number>> get_matrix_free() const;
     void initialize_dof_vector(VectorType &) const;
@@ -56,7 +56,6 @@ namespace solver {
     using FEEval = dealii::FEEvaluation<dim, -1, 0, 1, number>;
     using FEFaceEval = dealii::FEFaceEvaluation<dim, -1, 0, 1, number>;
     void integrate_cell_physics(FEEval &) const;
-    void integrate_cell_physics(FEEval &, const unsigned int) const;
     void integrate_face_physics(FEFaceEval &, FEFaceEval &) const;
     void integrate_boundary_physics(FEFaceEval &) const;
 
@@ -66,6 +65,9 @@ namespace solver {
     const unsigned int dof_index;
 
     const data::GeometryData &geometry_data;
+
+    dealii::AlignedVector<dealii::VectorizedArray<number>> diff_coef;
+    dealii::AlignedVector<dealii::VectorizedArray<number>> sigma_rem;
 
     std::shared_ptr<const MaterialCache<number>> material_cache;    
 

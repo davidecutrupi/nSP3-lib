@@ -19,11 +19,32 @@ namespace solver {
 
 
   template <unsigned int dim, typename number>
-  void SecondModeOperator<dim, number>::initialize(std::shared_ptr<const MatrixFree<dim, number>> data, std::shared_ptr<const MaterialCache<number>> material_cache) {
+  void SecondModeOperator<dim, number>::initialize(std::shared_ptr<const MatrixFree<dim, number>> data, std::shared_ptr<const MaterialCache<number>> material_cache, const data::MaterialData &material_data) {
     clear();
     this->data = data;
     this->material_cache = material_cache;
     diagonal_is_up_to_date = false;
+
+    const unsigned int n_batches = data->n_cell_batches();
+    
+    diff_coef.resize(n_batches);
+    sigma_rem.resize(n_batches);
+
+    for (unsigned int cell_batch = 0; cell_batch < n_batches; ++cell_batch) {
+      VectorizedArray<number> diff_batch = 0.0;
+      VectorizedArray<number> sig_rem_batch = 0.0;
+      
+      const unsigned int n_active = data->n_active_entries_per_cell_batch(cell_batch);
+      for (unsigned int v = 0; v < n_active; ++v) {
+        auto cell_iterator = data->get_cell_iterator(cell_batch, v, dof_index);
+        types::material_id mat_id = cell_iterator->material_id();
+        diff_batch[v] = number(material_data.get_diffusion(mat_id, dof_index));
+        sig_rem_batch[v] = number(material_data.get_sigma_rem(mat_id, dof_index));
+      }
+
+      diff_coef[cell_batch] = diff_batch;
+      sigma_rem[cell_batch] = sig_rem_batch;
+    }
   }
 
 
@@ -117,7 +138,7 @@ namespace solver {
     for (unsigned int cell = cell_range.first; cell < cell_range.second; ++cell) {
       phi.reinit(cell);
       phi.read_dof_values(src);
-      integrate_cell_physics(phi, cell);
+      integrate_cell_physics(phi);
       phi.distribute_local_to_global(dst);
     }
   }
@@ -157,16 +178,10 @@ namespace solver {
 
   template <unsigned int dim, typename number>
   void SecondModeOperator<dim, number>::integrate_cell_physics(FEEval &phi) const {
-    integrate_cell_physics(phi, phi.get_current_cell_index());
-  }
-
-
-  template <unsigned int dim, typename number>
-  void SecondModeOperator<dim, number>::integrate_cell_physics(FEEval &phi, const unsigned int cell) const {
     phi.evaluate(EvaluationFlags::values | EvaluationFlags::gradients);
 
-    const VectorizedArray<number> d = material_cache->diffusion[cell];
-    const VectorizedArray<number> srem = material_cache->sigma_rem[cell];
+    const VectorizedArray<number> d = phi.read_cell_data(diff_coef);
+    const VectorizedArray<number> srem = phi.read_cell_data(sigma_rem);
     const VectorizedArray<number> d22 = d * (3.0 / 7.0);
     const VectorizedArray<number> m22 = (1.0 / d) * (5.0 / 27.0) + srem * (4.0 / 9.0);
 
@@ -185,13 +200,11 @@ namespace solver {
     phi_outer.evaluate(EvaluationFlags::values | EvaluationFlags::gradients);
 
     // Collect diffusion coefficients of the cells
-    const VectorizedArray<number> d_in = material_cache->inner_face_diffusion_interior[phi_inner.get_current_cell_index()];
-    const VectorizedArray<number> d_out = material_cache->inner_face_diffusion_exterior[phi_outer.get_current_cell_index()];
-    const VectorizedArray<number> half_d22_in = (d_in * number(3.0 / 7.0)) * number(0.5);
-    const VectorizedArray<number> half_d22_out = (d_out * number(3.0 / 7.0)) * number(0.5);
+    const VectorizedArray<number> half_d22_in = phi_inner.read_cell_data(diff_coef) * number(3.0 / 7.0) * number(0.5);
+    const VectorizedArray<number> half_d22_out = phi_outer.read_cell_data(diff_coef) * number(3.0 / 7.0) * number(0.5);
 
     // Take maximum between D+ an D-
-    VectorizedArray<number> d_max = std::max(d_in, d_out);
+    VectorizedArray<number> d22_max = std::max(half_d22_in, half_d22_out) * number(2.0);
 
     // Get the inverse of the face length (deal.ii places the value of interest in position dim-1)
     const VectorizedArray<number> inverse_length_normal_to_face = 0.5 * (
@@ -200,7 +213,7 @@ namespace solver {
     );
 
     // Evaluate penalty sigma
-    const VectorizedArray<number> sigma = d_max * get_penalty_factor() * inverse_length_normal_to_face * (3.0 / 7.0);
+    const VectorizedArray<number> sigma = d22_max * get_penalty_factor() * inverse_length_normal_to_face;
 
     for (const unsigned int q : phi_inner.quadrature_point_indices()) {
       const auto phi_val_in = phi_inner.get_value(q);
