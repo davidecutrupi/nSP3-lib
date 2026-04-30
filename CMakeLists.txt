@@ -57,6 +57,7 @@ add_executable(neutronics
   src/MultigridPreconditioner.cpp
   src/InverseOperator.cpp
   src/BlockGSPreconditioner.cpp
+  src/BlockDiagonalPreconditioner.cpp
   src/SP3Operator.cpp
   src/EnergyGroup.cpp
   src/NeutronSolver.cpp
