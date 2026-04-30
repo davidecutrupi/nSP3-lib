@@ -27,9 +27,9 @@ namespace solver {
     }
 
 
-    private:
+  private:
     const unsigned int energy_group;
-     const data::MaterialData &material_data;
+    const data::MaterialData &material_data;
 
   };
 
