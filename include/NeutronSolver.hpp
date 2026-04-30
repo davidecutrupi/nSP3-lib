@@ -15,6 +15,8 @@
 #include <deal.II/distributed/tria.h>
 #include <deal.II/lac/la_parallel_block_vector.h>
 
+#include <memory>
+
 
 namespace solver {
 
@@ -34,15 +36,22 @@ namespace solver {
       bench_name(bench_name),
       material_data(data::MaterialData::from_file("../benchmarks/"  + bench_name + ".json")),
       geometry_data(data::GeometryData::from_file("../benchmarks/"  + bench_name + ".json")),
-      triangulation(
-        MPI_COMM_WORLD,
-        dealii::Triangulation<dim>::limit_level_difference_at_vertices,
-        dealii::parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
       mpi_size(dealii::Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)),
       mpi_rank(dealii::Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)),
       pcout(std::cout, mpi_rank == 0)
     {
       GlobalTimer::init(MPI_COMM_WORLD, pcout);
+
+      if constexpr (dim == 1) 
+        triangulation = std::make_shared<dealii::Triangulation<dim>>(
+          dealii::Triangulation<dim>::limit_level_difference_at_vertices
+        );
+      else 
+        triangulation = std::make_shared<dealii::parallel::distributed::Triangulation<dim>>(
+          MPI_COMM_WORLD,
+          dealii::Triangulation<dim>::limit_level_difference_at_vertices,
+          dealii::parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy
+        );
     };
     void run();
 
@@ -57,7 +66,7 @@ namespace solver {
     const data::MaterialData material_data;
     const data::GeometryData geometry_data;
     
-    dealii::parallel::distributed::Triangulation<dim> triangulation;
+    std::shared_ptr<dealii::Triangulation<dim>> triangulation;
     const dealii::MappingQ1<dim> mapping;
 
     std::shared_ptr<dealii::MatrixFree<dim, double>> mf_storage;

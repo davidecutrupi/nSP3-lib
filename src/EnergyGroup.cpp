@@ -153,7 +153,7 @@ namespace solver {
   void EnergyGroup<dim>::setup_multigrid() {
     TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::Setup::Multigrid");
 
-    const unsigned int nlevels = triangulation.n_global_levels();
+    const unsigned int nlevels = triangulation->n_global_levels();
     
     std::vector<std::shared_ptr<ZeroModeOperator<dim, float>>> level_zero_operators(nlevels);
     std::vector<std::shared_ptr<SecondModeOperator<dim, float>>> level_second_operators(nlevels);
@@ -455,7 +455,7 @@ namespace solver {
     if (p_degree != new_degree) {
       transfer_old_fe = std::move(fe);
     
-      transfer_old_dof_handler = std::make_unique<DoFHandler<dim>>(triangulation);
+      transfer_old_dof_handler = std::make_unique<DoFHandler<dim>>(*triangulation);
       transfer_old_dof_handler->distribute_dofs(*transfer_old_fe);
 
       needs_p_transfer = true;

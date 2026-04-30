@@ -49,7 +49,9 @@ namespace solver {
                                  static_cast<long long>(std::round(z * 1e6)));
       if (vertex_map.find(key) == vertex_map.end()) {
         vertex_map[key] = current_vertex_index++;
-        if constexpr (dim == 2)
+        if constexpr (dim == 1)
+          vertices.emplace_back(x);
+        else if constexpr (dim == 2)
           vertices.emplace_back(x, y);
         else 
           vertices.emplace_back(x, y, z);      
@@ -143,7 +145,11 @@ namespace solver {
             CellData<dim> cell;
             cell.material_id = mat_id;
 
-            if constexpr (dim == 2) {
+            if constexpr (dim == 1) {
+              cell.vertices[0] = get_or_create_vertex(i * pin_pitch_x, 0, 0); // Left
+              cell.vertices[1] = get_or_create_vertex((i+1) * pin_pitch_x, 0, 0); // Right
+            }
+            else if constexpr (dim == 2) {
               cell.vertices[0] = get_or_create_vertex(i * pin_pitch_x, j * pin_pitch_y, 0); // Bottom-Left
               cell.vertices[1] = get_or_create_vertex((i+1) * pin_pitch_x, j * pin_pitch_y, 0); // Bottom-Right
               cell.vertices[2] = get_or_create_vertex(i * pin_pitch_x, (j+1) * pin_pitch_y, 0); // Top-Left
@@ -171,13 +177,13 @@ namespace solver {
     }
 
     SubCellData subcell_data;
-    triangulation.create_triangulation(vertices, cells, subcell_data);
+    triangulation->create_triangulation(vertices, cells, subcell_data);
 
     if (geometry_data.get_explicit_pins_data().enabled) {
       const auto &ep = geometry_data.get_explicit_pins_data();
       const unsigned int pin_manifold_offset = 100;
       
-      for (auto &cell : triangulation.active_cell_iterators()) {
+      for (auto &cell : triangulation->active_cell_iterators()) {
         if (!cell->is_locally_owned()) continue;
         if (cell->material_id() != ep.moderator_material) {
           Point<dim> c = cell->center();
@@ -197,12 +203,12 @@ namespace solver {
       }
 
       for (unsigned int p = 0; p < explicit_pin_centers.size(); ++p) {
-        triangulation.set_manifold(pin_manifold_offset + p, SphericalManifold<dim>(explicit_pin_centers[p]));
+        triangulation->set_manifold(pin_manifold_offset + p, SphericalManifold<dim>(explicit_pin_centers[p]));
       }
     }
 
     // Set boundary ids
-    for (auto &cell : triangulation.active_cell_iterators())
+    for (auto &cell : triangulation->active_cell_iterators())
       for (const auto f : cell->face_indices())
         if (cell->face(f)->at_boundary()) 
           cell->face(f)->set_boundary_id(f);
@@ -223,10 +229,10 @@ namespace solver {
       n_subdivisions.emplace_back(core_n_assemblies_z);
 
     // Create triangulation
-    GridGenerator::subdivided_hyper_rectangle(triangulation, n_subdivisions, bottom_left, upper_right, true);
+    GridGenerator::subdivided_hyper_rectangle(*triangulation, n_subdivisions, bottom_left, upper_right, true);
 
     // Setup material ids
-    for (auto &cell : triangulation.active_cell_iterators()) {
+    for (auto &cell : triangulation->active_cell_iterators()) {
       if (cell->is_locally_owned()) {
         const Point<dim> cell_center = cell->center();
   
@@ -365,13 +371,13 @@ namespace solver {
     TimerOutput::Scope t(GlobalTimer::get(), "NeutronSolver::EstimateError");
 
     estimates.global_group_errors.resize(energy_groups.size(), 0.0);
-    estimates.h_refinement_estimators.reinit(triangulation.n_active_cells());
+    estimates.h_refinement_estimators.reinit(triangulation->n_active_cells());
 
     for (unsigned int g = 0; g < energy_groups.size(); ++g) {
       auto &group = energy_groups[g];
 
-      Vector<float> primal_kelly(triangulation.n_active_cells());
-      Vector<float> dual_kelly(triangulation.n_active_cells());
+      Vector<float> primal_kelly(triangulation->n_active_cells());
+      Vector<float> dual_kelly(triangulation->n_active_cells());
 
       QGauss<dim - 1> face_quadrature(group->get_degree() + 1);
 
@@ -408,7 +414,7 @@ namespace solver {
       ); */
 
       float local_group_error_sum = 0.0;
-      for (const auto &cell : triangulation.active_cell_iterators()) {
+      for (const auto &cell : triangulation->active_cell_iterators()) {
         if (cell->is_locally_owned()) {
           const unsigned int index = cell->active_cell_index();
           float goal_oriented_cell_error = primal_kelly(index); // * dual_kelly(index);
@@ -431,13 +437,7 @@ namespace solver {
     pcout << "===========================================" << std::endl << std::endl << std::endl;
 
     init_mesh();
-    // triangulation.refine_global(1);
-
-    /* GridOut grid_out;
-    const std::string filename = "../out/mesh.vtu";
-    std::ofstream output(filename);
-    grid_out.write_vtu(triangulation, output);
-    std::exit(0); */
+    triangulation->refine_global(1);
 
     k_eff = 1.0;
     k_eff_old = k_eff;
@@ -452,7 +452,7 @@ namespace solver {
       pcout << "===========================================" << std::endl;
       pcout << "Starting cycle " << cycle << ':' << std::endl;
       pcout << "===========================================" << std::endl;
-      pcout << "Number of active cells: " << triangulation.n_global_active_cells() << std::endl;
+      pcout << "Number of active cells: " << triangulation->n_global_active_cells() << std::endl;
 
       setup_groups();
       
@@ -476,7 +476,7 @@ namespace solver {
       compute_weighted_error(errors);
 
       GridRefinement::refine_and_coarsen_fixed_number(
-        triangulation,
+        *triangulation,
         errors.h_refinement_estimators,
         0.3,
         0.03
@@ -485,21 +485,21 @@ namespace solver {
       for (const auto &group : energy_groups)
         group->prepare_h_transfer();
 
-      // triangulation.refine_global(1);
-      triangulation.execute_coarsening_and_refinement();
+      triangulation->execute_coarsening_and_refinement();
+      // triangulation->refine_global(1);
 
       // h-refinement and p-refinement evaluation
-      // float max_error = *std::max_element(errors.global_group_errors.begin(), errors.global_group_errors.end());
+      float max_error = *std::max_element(errors.global_group_errors.begin(), errors.global_group_errors.end());
       for (unsigned int g = 0; g < energy_groups.size(); ++g) {
         energy_groups[g]->execute_h_transfer();
 
-        /* float threshold = 0.5f * static_cast<float>(std::pow((g + 1.0) / (energy_groups.size() + 1.0), 1.0)) * max_error;
+        float threshold = 0.5f * static_cast<float>(std::pow((g + 1.0) / (energy_groups.size() + 1.0), 1.0)) * max_error;
         pcout << "Group " << g << " Adjoint-Weighted Error: " << errors.global_group_errors[g] << " | Threshold: " << threshold << std::endl;
         
-        if (errors.global_group_errors[g] > threshold && energy_groups[g]->get_degree() < max_degree) { 
+        if (errors.global_group_errors[g] > threshold && energy_groups[g]->get_degree() < max_degree && false) { 
           pcout << "  -> Increasing p-degree to " << energy_groups[g]->get_degree() + 1 << std::endl;
           energy_groups[g]->set_degree(energy_groups[g]->get_degree() + 1);
-        } */
+        }
       }
 
       GlobalTimer::get().print_summary();

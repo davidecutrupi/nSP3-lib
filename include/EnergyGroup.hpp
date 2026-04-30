@@ -47,7 +47,7 @@ namespace solver {
                 const unsigned int p_degree,
                 const data::MaterialData &material_data,
                 const data::GeometryData &geometry_data,
-                const dealii::parallel::distributed::Triangulation<dim> &triangulation,
+                std::shared_ptr<dealii::Triangulation<dim>> triangulation,
                 const dealii::MappingQ1<dim> &mapping
     ) :
       group(group),
@@ -57,7 +57,7 @@ namespace solver {
       triangulation(triangulation),
       mapping(mapping),
       fe(std::make_unique<dealii::FE_DGQ<dim>>(p_degree)),
-      dof_handler(triangulation),
+      dof_handler(*triangulation),
 
       solution(2),
       solution_old(2),
@@ -97,7 +97,7 @@ namespace solver {
     const data::MaterialData &material_data;
     const data::GeometryData &geometry_data;
 
-    const dealii::parallel::distributed::Triangulation<dim> &triangulation;
+    std::shared_ptr<dealii::Triangulation<dim>> triangulation;
     const dealii::MappingQ1<dim> &mapping;
     
     std::unique_ptr<dealii::FE_DGQ<dim>> fe;
