@@ -66,17 +66,7 @@ namespace solver {
 
   template <unsigned int dim, typename number>
   void CouplingOperator<dim, number>::Tvmult(VectorType &dst, const VectorType &src) const {
-    data->loop(
-      &CouplingOperator::apply_cell_T,
-      &CouplingOperator::apply_face,
-      &CouplingOperator::apply_boundary_T,
-      this,
-      dst,
-      src,
-      true, // Set dst to zero
-      MatrixFree<dim, number>::DataAccessOnFaces::values,
-      MatrixFree<dim, number>::DataAccessOnFaces::values
-    );
+    vmult(dst, src);
   }
 
 
@@ -94,22 +84,6 @@ namespace solver {
     }
   }
 
-
-  template <unsigned int dim, typename number>
-  void CouplingOperator<dim, number>::apply_cell_T(const MatrixFree<dim, number> &data, VectorType &dst, const VectorType &src, const std::pair<unsigned int, unsigned int> &cell_range) const {
-    FEEval phi_src(data, dof_index, dof_index, /* first_selected_component */ 0);
-    FEEval phi_dst(data, dof_index, dof_index, /* first_selected_component */ 0);
-    
-    for (unsigned int cell = cell_range.first; cell < cell_range.second; ++cell) {
-      phi_src.reinit(cell);
-      phi_dst.reinit(cell);
-      phi_src.gather_evaluate(src, EvaluationFlags::values);
-      integrate_cell_physics(phi_src, phi_dst, cell);
-      phi_dst.integrate_scatter(EvaluationFlags::values, dst);
-    }
-  }
-
-
   template <unsigned int dim, typename number>
   void CouplingOperator<dim, number>::apply_face(const MatrixFree<dim, number> &, VectorType &, const VectorType &, const std::pair<unsigned int, unsigned int> &) const {
     // No face contributions
@@ -118,21 +92,6 @@ namespace solver {
 
   template <unsigned int dim, typename number>
   void CouplingOperator<dim, number>::apply_boundary(const MatrixFree<dim, number> &data, VectorType &dst, const VectorType &src, const std::pair<unsigned int, unsigned int> &face_range) const {
-    FEFaceEval phi_inner_src(data, true, dof_index, dof_index, /* first_selected_component */ 0);
-    FEFaceEval phi_inner_dst(data, true, dof_index, dof_index, /* first_selected_component */ 0);
-
-    for (unsigned int face = face_range.first; face < face_range.second; ++face) {
-      phi_inner_src.reinit(face);
-      phi_inner_dst.reinit(face);
-      phi_inner_src.gather_evaluate(src, EvaluationFlags::values);
-      integrate_boundary_physics(phi_inner_src, phi_inner_dst);
-      phi_inner_dst.integrate_scatter(EvaluationFlags::values, dst);
-    }
-  }
-
-
-  template <unsigned int dim, typename number>
-  void CouplingOperator<dim, number>::apply_boundary_T(const MatrixFree<dim, number> &data, VectorType &dst, const VectorType &src, const std::pair<unsigned int, unsigned int> &face_range) const {
     FEFaceEval phi_inner_src(data, true, dof_index, dof_index, /* first_selected_component */ 0);
     FEFaceEval phi_inner_dst(data, true, dof_index, dof_index, /* first_selected_component */ 0);
 
