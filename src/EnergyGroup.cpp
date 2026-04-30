@@ -6,6 +6,7 @@
 #include "CouplingOperator.hpp"
 
 #include <deal.II/dofs/dof_renumbering.h>
+#include <deal.II/dofs/dof_tools.h>
 #include <deal.II/lac/block_vector.h>
 
 #include <deal.II/numerics/data_out.h>
@@ -15,6 +16,7 @@
 #include <deal.II/base/aligned_vector.h>
 #include <deal.II/base/vectorization.h>
 #include <deal.II/base/timer.h>
+#include <deal.II/base/index_set.h>
 
 #include <deal.II/multigrid/multigrid.h>
 #include <deal.II/multigrid/mg_transfer_matrix_free.h>
@@ -484,13 +486,33 @@ namespace solver {
     DataOut<dim> data_out;
     data_out.attach_dof_handler(dof_handler);
     
-    // Flux
-    data_out.add_data_vector(solution.block(0), "phi0");
-    data_out.add_data_vector(solution.block(1), "phi2");
+    // Index sets
+    const IndexSet locally_owned_dofs = dof_handler.locally_owned_dofs();
+    const IndexSet locally_relevant_dofs = DoFTools::extract_locally_relevant_dofs(dof_handler);
 
-    // Current
+    // Get the locally relevant solution of the zero mode and the second mode
+    LinearAlgebra::distributed::Vector<double> relevant_phi0, relevant_phi2, relevant_U0;
+    relevant_phi0.reinit(locally_owned_dofs, locally_relevant_dofs, MPI_COMM_WORLD);
+    relevant_U0.reinit(locally_owned_dofs, locally_relevant_dofs, MPI_COMM_WORLD);
+    relevant_phi2.reinit(locally_owned_dofs, locally_relevant_dofs, MPI_COMM_WORLD);
+    relevant_phi0 = solution.block(0);
+    relevant_U0 = relevant_phi0;
+    relevant_phi2 = solution.block(1);
+    relevant_phi0.update_ghost_values();
+    relevant_U0.update_ghost_values();
+    relevant_phi2.update_ghost_values();
+
+    // Compute fluxes
+    relevant_phi2 /= 3.0;
+    relevant_phi0.add(-2.0, relevant_phi2);
+
+    // Add fluxes
+    data_out.add_data_vector(relevant_phi0, "flux0");
+    data_out.add_data_vector(relevant_phi2, "flux2");
+
+    // Add current
     CurrentPostprocessor<dim> current_postprocessor(group, material_data);
-    data_out.add_data_vector(solution.block(0), current_postprocessor);
+    data_out.add_data_vector(relevant_U0, current_postprocessor);
 
     data_out.build_patches();
     
