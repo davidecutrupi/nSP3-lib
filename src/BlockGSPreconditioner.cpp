@@ -117,60 +117,6 @@ template class solver::BlockGSPreconditioner<
   solver::InverseOperator<
     dealii::LinearAlgebra::distributed::Vector<double>,
     solver::SecondModeOperator<3u, double>,
-    dealii::PreconditionChebyshev<solver::SecondModeOperator<3u, double>, dealii::LinearAlgebra::distributed::Vector<double>>
-  >,
-  solver::CouplingOperator<3u, double>
->;
-
-template class solver::BlockGSPreconditioner<
-  dealii::LinearAlgebra::distributed::BlockVector<double>,
-  solver::InverseOperator<
-    dealii::LinearAlgebra::distributed::Vector<double>,
-    solver::ZeroModeOperator<2u, double>,
-    solver::MultigridPreconditioner<2u, float, solver::ZeroModeOperator<2u, float>>
-  >,
-  solver::InverseOperator<
-    dealii::LinearAlgebra::distributed::Vector<double>,
-    solver::SecondModeOperator<2u, double>,
-    dealii::PreconditionChebyshev<solver::SecondModeOperator<2u, double>, dealii::LinearAlgebra::distributed::Vector<double>>
-  >,
-  solver::CouplingOperator<2u, double>
->;
-
-
-template class solver::BlockGSPreconditioner<
-  dealii::LinearAlgebra::distributed::BlockVector<double>,
-  solver::InverseOperator<
-    dealii::LinearAlgebra::distributed::Vector<double>,
-    solver::ZeroModeOperator<3u, double>,
-    solver::MultigridPreconditioner<3u, float, solver::ZeroModeOperator<3u, float>>
-  >,
-  dealii::PreconditionChebyshev<solver::SecondModeOperator<3u, double>, dealii::LinearAlgebra::distributed::Vector<double>>,
-  solver::CouplingOperator<3u, double>
->;
-
-template class solver::BlockGSPreconditioner<
-  dealii::LinearAlgebra::distributed::BlockVector<double>,
-  solver::InverseOperator<
-    dealii::LinearAlgebra::distributed::Vector<double>,
-    solver::ZeroModeOperator<2u, double>,
-    solver::MultigridPreconditioner<2u, float, solver::ZeroModeOperator<2u, float>>
-  >,
-  dealii::PreconditionChebyshev<solver::SecondModeOperator<2u, double>, dealii::LinearAlgebra::distributed::Vector<double>>,
-  solver::CouplingOperator<2u, double>
->;
-
-
-template class solver::BlockGSPreconditioner<
-  dealii::LinearAlgebra::distributed::BlockVector<double>,
-  solver::InverseOperator<
-    dealii::LinearAlgebra::distributed::Vector<double>,
-    solver::ZeroModeOperator<3u, double>,
-    solver::MultigridPreconditioner<3u, float, solver::ZeroModeOperator<3u, float>>
-  >,
-  solver::InverseOperator<
-    dealii::LinearAlgebra::distributed::Vector<double>,
-    solver::SecondModeOperator<3u, double>,
     solver::MultigridPreconditioner<3u, float, solver::SecondModeOperator<3u, float>>
   >,
   solver::CouplingOperator<3u, double>
@@ -189,4 +135,19 @@ template class solver::BlockGSPreconditioner<
     solver::MultigridPreconditioner<2u, float, solver::SecondModeOperator<2u, float>>
   >,
   solver::CouplingOperator<2u, double>
+>;
+
+template class solver::BlockGSPreconditioner<
+  dealii::LinearAlgebra::distributed::BlockVector<double>,
+  solver::InverseOperator<
+    dealii::LinearAlgebra::distributed::Vector<double>,
+    solver::ZeroModeOperator<1u, double>,
+    solver::MultigridPreconditioner<1u, float, solver::ZeroModeOperator<1u, float>>
+  >,
+  solver::InverseOperator<
+    dealii::LinearAlgebra::distributed::Vector<double>,
+    solver::SecondModeOperator<1u, double>,
+    solver::MultigridPreconditioner<1u, float, solver::SecondModeOperator<1u, float>>
+  >,
+  solver::CouplingOperator<1u, double>
 >;

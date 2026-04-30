@@ -344,3 +344,4 @@ namespace solver {
 
 template class solver::SP3Operator<3u, double>;
 template class solver::SP3Operator<2u, double>;
+template class solver::SP3Operator<1u, double>;

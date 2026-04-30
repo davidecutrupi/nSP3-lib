@@ -53,17 +53,10 @@ template class solver::InverseOperator<
   solver::MultigridPreconditioner<2u, float, solver::ZeroModeOperator<2u, float>>
 >;
 
-
 template class solver::InverseOperator<
   dealii::LinearAlgebra::distributed::Vector<double>,
-  solver::SecondModeOperator<3u, double>,
-  dealii::PreconditionChebyshev<solver::SecondModeOperator<3u, double>, dealii::LinearAlgebra::distributed::Vector<double>>
->;
-
-template class solver::InverseOperator<
-  dealii::LinearAlgebra::distributed::Vector<double>,
-  solver::SecondModeOperator<2u, double>,
-  dealii::PreconditionChebyshev<solver::SecondModeOperator<2u, double>, dealii::LinearAlgebra::distributed::Vector<double>>
+  solver::ZeroModeOperator<1u, double>,
+  solver::MultigridPreconditioner<1u, float, solver::ZeroModeOperator<1u, float>>
 >;
 
 
@@ -77,4 +70,10 @@ template class solver::InverseOperator<
   dealii::LinearAlgebra::distributed::Vector<double>,
   solver::SecondModeOperator<2u, double>,
   solver::MultigridPreconditioner<2u, float, solver::SecondModeOperator<2u, float>>
+>;
+
+template class solver::InverseOperator<
+  dealii::LinearAlgebra::distributed::Vector<double>,
+  solver::SecondModeOperator<1u, double>,
+  solver::MultigridPreconditioner<1u, float, solver::SecondModeOperator<1u, float>>
 >;

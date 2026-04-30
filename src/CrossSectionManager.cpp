@@ -128,3 +128,6 @@ template class solver::CrossSectionManager<3u, float>;
 
 template class solver::CrossSectionManager<2u, double>;
 template class solver::CrossSectionManager<2u, float>;
+
+template class solver::CrossSectionManager<1u, double>;
+template class solver::CrossSectionManager<1u, float>;

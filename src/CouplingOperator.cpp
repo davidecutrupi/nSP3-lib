@@ -136,3 +136,5 @@ namespace solver {
 template class solver::CouplingOperator<3u, double>;
 
 template class solver::CouplingOperator<2u, double>;
+
+template class solver::CouplingOperator<1u, double>;

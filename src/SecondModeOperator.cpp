@@ -320,6 +320,8 @@ namespace solver {
 
 template class solver::SecondModeOperator<3u, double>;
 template class solver::SecondModeOperator<2u, double>;
+template class solver::SecondModeOperator<1u, double>;
 
 template class solver::SecondModeOperator<3u, float>;
 template class solver::SecondModeOperator<2u, float>;
+template class solver::SecondModeOperator<1u, float>;

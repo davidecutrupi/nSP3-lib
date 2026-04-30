@@ -527,3 +527,5 @@ namespace solver {
 template class solver::EnergyGroup<3u>;
 
 template class solver::EnergyGroup<2u>;
+
+template class solver::EnergyGroup<1u>;

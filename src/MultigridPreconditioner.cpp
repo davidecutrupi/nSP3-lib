@@ -107,6 +107,11 @@ using MGPrecZeroFloat2 = solver::MultigridPreconditioner<2u, float, solver::Zero
 template void MGPrecZeroFloat2::vmult<DoubleVector>(DoubleVector &dst, const DoubleVector &src) const;
 template void MGPrecZeroFloat2::Tvmult<DoubleVector>(DoubleVector &dst, const DoubleVector &src) const;
 
+template class solver::MultigridPreconditioner<1u, float, solver::ZeroModeOperator<1u, float>>;
+using MGPrecZeroFloat1 = solver::MultigridPreconditioner<1u, float, solver::ZeroModeOperator<1u, float>>;
+template void MGPrecZeroFloat1::vmult<DoubleVector>(DoubleVector &dst, const DoubleVector &src) const;
+template void MGPrecZeroFloat1::Tvmult<DoubleVector>(DoubleVector &dst, const DoubleVector &src) const;
+
 template class solver::MultigridPreconditioner<3u, float, solver::SecondModeOperator<3u, float>>;
 using MGPrecSecondFloat3 = solver::MultigridPreconditioner<3u, float, solver::SecondModeOperator<3u, float>>;
 template void MGPrecSecondFloat3::vmult<DoubleVector>(DoubleVector &dst, const DoubleVector &src) const;
@@ -116,3 +121,8 @@ template class solver::MultigridPreconditioner<2u, float, solver::SecondModeOper
 using MGPrecSecondFloat2 = solver::MultigridPreconditioner<2u, float, solver::SecondModeOperator<2u, float>>;
 template void MGPrecSecondFloat2::vmult<DoubleVector>(DoubleVector &dst, const DoubleVector &src) const;
 template void MGPrecSecondFloat2::Tvmult<DoubleVector>(DoubleVector &dst, const DoubleVector &src) const;
+
+template class solver::MultigridPreconditioner<1u, float, solver::SecondModeOperator<1u, float>>;
+using MGPrecSecondFloat1 = solver::MultigridPreconditioner<1u, float, solver::SecondModeOperator<1u, float>>;
+template void MGPrecSecondFloat1::vmult<DoubleVector>(DoubleVector &dst, const DoubleVector &src) const;
+template void MGPrecSecondFloat1::Tvmult<DoubleVector>(DoubleVector &dst, const DoubleVector &src) const;

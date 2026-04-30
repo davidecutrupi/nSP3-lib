@@ -320,3 +320,6 @@ template class solver::ZeroModeOperator<3u, float>;
 
 template class solver::ZeroModeOperator<2u, double>;
 template class solver::ZeroModeOperator<2u, float>;
+
+template class solver::ZeroModeOperator<1u, double>;
+template class solver::ZeroModeOperator<1u, float>;
