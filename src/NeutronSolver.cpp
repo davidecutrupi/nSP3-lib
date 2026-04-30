@@ -432,9 +432,18 @@ namespace solver {
 
 
   void NeutronSolver::run() {
-    pcout << "===========================================" << std::endl;
-    pcout << "RUNNING BENCHMARK " << bench_name << std::endl;
-    pcout << "===========================================" << std::endl << std::endl << std::endl;
+
+    {
+      const unsigned int n_mpi_procs = Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
+      const unsigned int n_vect_doubles = VectorizedArray<double>::size();
+      const unsigned int n_vect_bits = 8 * sizeof(double) * n_vect_doubles;
+      
+      pcout << "===========================================" << std::endl;
+      pcout << "RUNNING BENCHMARK " << bench_name << std::endl;
+      pcout << "Running with " << n_mpi_procs << " MPI process(es)" << std::endl;
+      pcout << "Vectorization over " << n_vect_doubles << " doubles = " << n_vect_bits << " bits (" << Utilities::System::get_current_vectorization_level() << ')' << std::endl;
+      pcout << "===========================================" << std::endl << std::endl << std::endl;
+    }
 
     init_mesh();
     triangulation->refine_global(1);
