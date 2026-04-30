@@ -2,7 +2,9 @@
 
 #include "GeometryData.hpp"
 #include "CrossSectionManager.hpp"
+#include "MaterialData.hpp"
 
+#include <deal.II/base/aligned_vector.h>
 #include <deal.II/base/enable_observer_pointer.h>
 #include <deal.II/base/tensor.h>
 
@@ -27,7 +29,7 @@ namespace solver {
     {};
 
     void clear();
-    void initialize(std::shared_ptr<const dealii::MatrixFree<dim, number>>, std::shared_ptr<const MaterialCache<number>>);
+    void initialize(std::shared_ptr<const dealii::MatrixFree<dim, number>>, std::shared_ptr<const MaterialCache<number>>, const data::MaterialData &);
     std::shared_ptr<const dealii::Utilities::MPI::Partitioner> get_vector_partitioner() const;
     std::shared_ptr<const dealii::MatrixFree<dim, number>> get_matrix_free() const;
     void initialize_dof_vector(BlockVectorType &) const;
@@ -51,6 +53,9 @@ namespace solver {
     const unsigned int dof_index;
 
     const data::GeometryData &geometry_data;
+
+    dealii::AlignedVector<dealii::VectorizedArray<number>> diff_coef;
+    dealii::AlignedVector<dealii::VectorizedArray<number>> sigma_rem;
 
     std::shared_ptr<const MaterialCache<number>> material_cache;
   };

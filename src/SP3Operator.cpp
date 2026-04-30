@@ -18,10 +18,31 @@ namespace solver {
   
   
   template <unsigned int dim, typename number>
-  void SP3Operator<dim, number>::initialize(std::shared_ptr<const MatrixFree<dim, number>> data, std::shared_ptr<const MaterialCache<number>> material_cache) {
+  void SP3Operator<dim, number>::initialize(std::shared_ptr<const MatrixFree<dim, number>> data, std::shared_ptr<const MaterialCache<number>> material_cache, const data::MaterialData &material_data) {
     clear();
     this->data = data;
     this->material_cache = material_cache;
+
+    const unsigned int n_batches = data->n_cell_batches();
+    
+    diff_coef.resize(n_batches);
+    sigma_rem.resize(n_batches);
+
+    for (unsigned int cell_batch = 0; cell_batch < n_batches; ++cell_batch) {
+      VectorizedArray<number> diff_batch = 0.0;
+      VectorizedArray<number> sig_rem_batch = 0.0;
+      
+      const unsigned int n_active = data->n_active_entries_per_cell_batch(cell_batch);
+      for (unsigned int v = 0; v < n_active; ++v) {
+        auto cell_iterator = data->get_cell_iterator(cell_batch, v, dof_index);
+        types::material_id mat_id = cell_iterator->material_id();
+        diff_batch[v] = material_data.get_diffusion(mat_id, dof_index);
+        sig_rem_batch[v] = material_data.get_sigma_rem(mat_id, dof_index);
+      }
+
+      diff_coef[cell_batch] = diff_batch;
+      sigma_rem[cell_batch] = sig_rem_batch;
+    }
   }
 
 
@@ -100,8 +121,8 @@ namespace solver {
       phi0.gather_evaluate(src.block(0), EvaluationFlags::gradients | EvaluationFlags::values);
       phi2.gather_evaluate(src.block(1), EvaluationFlags::gradients | EvaluationFlags::values);
       
-      const VectorizedArray<number> d = material_cache->diffusion[cell];
-      const VectorizedArray<number> srem = material_cache->sigma_rem[cell];
+      const VectorizedArray<number> d = phi0.read_cell_data(diff_coef);
+      const VectorizedArray<number> srem = phi0.read_cell_data(sigma_rem);
 
       const VectorizedArray<number> d22 = d * (3.0 / 7.0);
       const VectorizedArray<number> m12 = srem * -(2.0 / 3.0);
@@ -153,8 +174,8 @@ namespace solver {
       const VectorizedArray<number> disc_fact_out = material_cache->inner_face_disc_fact_exterior[phi0_outer.get_current_cell_index()];
 
       // Collect diffusion coefficients of the cells
-      const VectorizedArray<number> half_d_in = material_cache->inner_face_diffusion_interior[phi0_inner.get_current_cell_index()] * number(0.5);
-      const VectorizedArray<number> half_d_out = material_cache->inner_face_diffusion_exterior[phi0_outer.get_current_cell_index()] * number(0.5);
+      const VectorizedArray<number> half_d_in = phi0_inner.read_cell_data(diff_coef) * number(0.5);
+      const VectorizedArray<number> half_d_out = phi0_outer.read_cell_data(diff_coef) * number(0.5);
       // const VectorizedArray<number> half_d22_in = half_d_in * (3.0 / 7.0);
       // const VectorizedArray<number> half_d22_out = half_d_out * (3.0 / 7.0);
 
@@ -163,6 +184,7 @@ namespace solver {
       (void) d_max;
       const number epsilon = 1e-15;
       VectorizedArray<number> d_harmonic = (number(4.0) * half_d_in * half_d_out) / (half_d_in + half_d_out + epsilon);
+      (void) d_harmonic;
 
       // Get the inverse of the face length (deal.ii places the value of interest in position dim-1)
       const VectorizedArray<number> inverse_length_normal_to_face = 0.5 * (
@@ -172,8 +194,8 @@ namespace solver {
 
       // Evaluate penalty sigma
       const Tensor<1, 2, VectorizedArray<number>> sigma({
-        d_harmonic * get_penalty_factor() * inverse_length_normal_to_face,
-        d_harmonic * get_penalty_factor() * inverse_length_normal_to_face * (3.0 / 7.0)
+        d_max * get_penalty_factor() * inverse_length_normal_to_face,
+        d_max * get_penalty_factor() * inverse_length_normal_to_face * (3.0 / 7.0)
       });
 
       for (const unsigned int q : phi0_inner.quadrature_point_indices()) {
@@ -185,8 +207,8 @@ namespace solver {
 
         // Avg normal derivative for both equations
         const Tensor<1, 2, VectorizedArray<number>> avg_normal_derivative ({
-          0.5 * d_harmonic * (phi0_inner.get_normal_derivative(q) + phi0_outer.get_normal_derivative(q)),
-          0.5 * d_harmonic * (3.0 / 7.0) * (phi2_inner.get_normal_derivative(q) + phi2_outer.get_normal_derivative(q))
+          half_d_in * phi0_inner.get_normal_derivative(q) + half_d_out * phi0_outer.get_normal_derivative(q),
+          half_d_in * (3.0 / 7.0) * phi2_inner.get_normal_derivative(q) + half_d_out * (3.0 / 7.0) * phi2_outer.get_normal_derivative(q)
         });
         
         // test_by_value includes also the penalty term
@@ -201,11 +223,11 @@ namespace solver {
         phi0_outer.submit_value(-test_by_value[0], q);
         phi2_outer.submit_value(-test_by_value[1], q);
 
-        phi0_inner.submit_normal_derivative(-jump[0] * d_harmonic * 0.5, q);
-        phi2_inner.submit_normal_derivative(-jump[1] * d_harmonic * 0.5 * (3.0 / 7.0), q);
+        phi0_inner.submit_normal_derivative(-jump[0] * half_d_in, q);
+        phi2_inner.submit_normal_derivative(-jump[1] * half_d_in * (3.0 / 7.0), q);
         
-        phi0_outer.submit_normal_derivative(-jump[0] * d_harmonic * 0.5, q);
-        phi2_outer.submit_normal_derivative(-jump[1] * d_harmonic * 0.5 * (3.0 / 7.0), q);
+        phi0_outer.submit_normal_derivative(-jump[0] * half_d_out, q);
+        phi2_outer.submit_normal_derivative(-jump[1] * half_d_out * (3.0 / 7.0), q);
       }
 
       phi0_inner.integrate_scatter(EvaluationFlags::values | EvaluationFlags::gradients, dst.block(0));
