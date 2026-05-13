@@ -17,6 +17,10 @@ public:
     return *timer;
   }
 
+  static void clear() {
+    timer.reset();
+  }
+
 private:
   inline static std::unique_ptr<dealii::TimerOutput> timer = nullptr;
 
