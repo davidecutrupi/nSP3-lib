@@ -23,7 +23,7 @@ namespace solver {
     this->data = data;
     this->material_cache = material_cache;
 
-    const unsigned int n_batches = data->n_cell_batches();
+    const unsigned int n_batches = data->n_cell_batches() + data->n_ghost_cell_batches();
     
     diff_coef.resize(n_batches);
     sigma_rem.resize(n_batches);
