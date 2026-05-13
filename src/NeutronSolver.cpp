@@ -421,7 +421,7 @@ namespace solver {
           local_group_error_sum += goal_oriented_cell_error;
 
           // h refinement if the group is thermic (most 2 thermic groups)
-          if (g >= energy_groups.size() - 2 || true) // TODO
+          if (g >= energy_groups.size() - 2)
             estimates.h_refinement_estimators(index) += goal_oriented_cell_error;
         }
       }
