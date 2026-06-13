@@ -1,6 +1,7 @@
 #include "CouplingOperator.hpp"
 
 #include <deal.II/base/types.h>
+#include <deal.II/base/exceptions.h>
 #include <deal.II/base/vectorization.h>
 
 #include <deal.II/matrix_free/evaluation_flags.h>
@@ -119,7 +120,7 @@ namespace solver {
     // Check b.c. (only albedo supported at now)
     const types::boundary_id boundary_id = phi_src.boundary_id();
     data::GeometryData::BoundaryConditions bc = geometry_data.get_boundary_condition(boundary_id);
-    Assert(bc.type != data::GeometryData::BoundaryConditions::BoundaryConditionType::Dirichlet, StandardExceptions::ExcNotImplemented());
+    AssertThrow(bc.type != data::GeometryData::BoundaryConditions::BoundaryConditionType::Dirichlet, ExcMessage("Dirichlet boundary conditions are not implemented for CouplingOperator."));
     
     const VectorizedArray<number> albedo_factor = (1 - bc.param) / (1 + bc.param);
     const VectorizedArray<number> m12 = - (1.0 / 8.0) * albedo_factor;

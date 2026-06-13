@@ -1,15 +1,23 @@
 #include "BlockDiagonalPreconditioner.hpp"
 
+#include <deal.II/base/exceptions.h>
+
+
 namespace solver {
+  using namespace dealii;
 
   template <typename BlockVectorType, typename InnerPreconditionerZero, typename InnerPreconditionerSecond>
   void BlockDiagonalPreconditioner<BlockVectorType, InnerPreconditionerZero, InnerPreconditionerSecond>::vmult(BlockVectorType &dst, const BlockVectorType &src) const {
+    Assert(dst.n_blocks() == 2 && src.n_blocks() == 2, ExcInternalError());
+
     prec_zero->vmult(dst.block(0), src.block(0));
     prec_second->vmult(dst.block(1), src.block(1));
   }
 
   template <typename BlockVectorType, typename InnerPreconditionerZero, typename InnerPreconditionerSecond>
   void BlockDiagonalPreconditioner<BlockVectorType, InnerPreconditionerZero, InnerPreconditionerSecond>::Tvmult(BlockVectorType &dst, const BlockVectorType &src) const {
+    Assert(dst.n_blocks() == 2 && src.n_blocks() == 2, ExcInternalError());
+
     prec_zero->Tvmult(dst.block(0), src.block(0));
     prec_second->Tvmult(dst.block(1), src.block(1));
   }

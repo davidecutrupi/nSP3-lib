@@ -436,6 +436,11 @@ namespace solver {
     h_interpolated_solution = std::make_unique<BlockVectorType<double>>(2);
     h_interpolated_solution->block(0).reinit(locally_owned, MPI_COMM_WORLD);
     h_interpolated_solution->block(1).reinit(locally_owned, MPI_COMM_WORLD);
+    h_interpolated_solution->collect_sizes();
+
+    Assert(h_interpolated_solution->n_blocks() == 2, ExcMessage("EnergyGroup::execute_h_transfer expects exactly two SP3 mode blocks."));
+    Assert(h_interpolated_solution->block(0).size() == h_interpolated_solution->block(1).size(), ExcMessage("SP3 mode blocks must have the same scalar DoF-space size after h-transfer reinit."));
+    Assert(h_interpolated_solution->block(0).locally_owned_elements() == h_interpolated_solution->block(1).locally_owned_elements(), ExcMessage("SP3 mode blocks must have identical locally owned scalar DoF partitions after h-transfer reinit."));
 
     std::vector<VectorType<double>*> out_vectors = { &h_interpolated_solution->block(0), &h_interpolated_solution->block(1) };
     sol_transfer->interpolate(out_vectors);

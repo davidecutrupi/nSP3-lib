@@ -68,7 +68,7 @@ namespace solver {
   
   template <unsigned int dim, typename number>
   number SecondModeOperator<dim, number>::el(const unsigned int row, const unsigned int col) const {
-    Assert(row == col, ExcNotImplemented());
+    Assert(row == col, ExcMessage("SecondModeOperator::el only supports diagonal access."));
     Assert(inverse_diagonal.get() != nullptr && inverse_diagonal->m() > 0, ExcNotInitialized());
     return number(1.0) / (*inverse_diagonal)(row, row);
   }
@@ -247,7 +247,7 @@ namespace solver {
     // Check b.c. (only albedo supported at now)
     const types::boundary_id boundary_id = phi_inner.boundary_id();
     data::GeometryData::BoundaryConditions bc = geometry_data.get_boundary_condition(boundary_id);
-    Assert(bc.type != data::GeometryData::BoundaryConditions::BoundaryConditionType::Dirichlet, StandardExceptions::ExcNotImplemented());
+    AssertThrow(bc.type != data::GeometryData::BoundaryConditions::BoundaryConditionType::Dirichlet, ExcMessage("Dirichlet boundary conditions are not implemented for SecondModeOperator."));
     
     // Evaluate mass matrix using albedo parameter
     const VectorizedArray<number> albedo_factor = number((1 - bc.param) / (1 + bc.param));

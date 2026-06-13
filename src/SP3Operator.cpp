@@ -60,8 +60,14 @@ namespace solver {
   
   template <unsigned int dim, typename number>
   void SP3Operator<dim, number>::initialize_dof_vector(BlockVectorType &vec) const {
+    Assert(vec.n_blocks() == 2, ExcMessage("SP3Operator expects exactly two blocks for SP3 mode 0 and mode 2."));
+
     data->initialize_dof_vector(vec.block(0), dof_index);
     data->initialize_dof_vector(vec.block(1), dof_index);
+    vec.collect_sizes();
+
+    Assert(vec.block(0).size() == vec.block(1).size(), ExcMessage("SP3 mode blocks must have the same scalar DoF-space size."));
+    Assert(vec.block(0).locally_owned_elements() == vec.block(1).locally_owned_elements(), ExcMessage("SP3 mode blocks must use identical locally owned scalar DoF partitions."));
   }
   
 
@@ -335,7 +341,7 @@ namespace solver {
       // Check b.c. (only albedo supported at now)
       const types::boundary_id boundary_id = phi0_inner.boundary_id();
       data::GeometryData::BoundaryConditions bc = geometry_data.get_boundary_condition(boundary_id);
-      Assert(bc.type != data::GeometryData::BoundaryConditions::BoundaryConditionType::Dirichlet, StandardExceptions::ExcNotImplemented());
+      AssertThrow(bc.type != data::GeometryData::BoundaryConditions::BoundaryConditionType::Dirichlet, ExcMessage("Dirichlet boundary conditions are not implemented for SP3Operator."));
 
       // Evaluate mass matrix using albedo parameter
       const VectorizedArray<number> albedo_factor = (1 - bc.param) / (1 + bc.param);

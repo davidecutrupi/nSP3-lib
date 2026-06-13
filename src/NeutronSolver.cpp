@@ -85,7 +85,7 @@ namespace solver {
           const bool explicit_pins = geometry_data.get_explicit_pins_data().enabled;
 
           if (explicit_pins) {
-            Assert(dim == 2, ExcMessage("Explicit pins currently only implemented in 2D."));
+            AssertThrow(dim == 2, ExcMessage("Explicit pins currently only implemented in 2D."));
             
             const auto &ep = geometry_data.get_explicit_pins_data();
             const unsigned int n_edges = static_cast<unsigned int>(std::pow(2, 2 + ep.expected_refinements));
