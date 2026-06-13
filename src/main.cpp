@@ -6,9 +6,11 @@ int main(int argc, char **argv) {
   try {
     dealii::Utilities::MPI::MPI_InitFinalize mpi_init(argc, argv);
 
-    std::string bench_name = argc == 1 ? "data" : argv[1];
-    solver::NeutronSolver neutron_solver(bench_name);
-    neutron_solver.run();
+    {
+      const solver::SolverParameters parameters;
+      solver::NeutronSolver neutron_solver(parameters);
+      neutron_solver.run();
+    }
 
     GlobalTimer::clear();
   }

@@ -3,6 +3,7 @@
 #include "MaterialData.hpp"
 #include "GeometryData.hpp"
 #include "CrossSectionManager.hpp"
+#include "SolverParameters.hpp"
 
 #include "ZeroModeOperator.hpp"
 #include "SecondModeOperator.hpp"
@@ -45,6 +46,7 @@ namespace solver {
 
     EnergyGroup(const unsigned int group,
                 const unsigned int p_degree,
+                const SolverParameters &parameters,
                 const data::MaterialData &material_data,
                 const data::GeometryData &geometry_data,
                 std::shared_ptr<dealii::Triangulation<dim>> triangulation,
@@ -52,6 +54,7 @@ namespace solver {
     ) :
       group(group),
       p_degree(p_degree),
+      parameters(parameters),
       material_data(material_data),
       geometry_data(geometry_data),
       triangulation(triangulation),
@@ -75,7 +78,7 @@ namespace solver {
     
     void update_solution(const double, bool);
     void copy_forward_to_adjoint();
-    void output_results(const std::string &) const;
+    void output_results() const;
     
     void set_degree(unsigned int);
     void prepare_h_transfer();
@@ -94,6 +97,8 @@ namespace solver {
 
     const unsigned int group;
     unsigned int p_degree;
+
+    const SolverParameters &parameters;
     const data::MaterialData &material_data;
     const data::GeometryData &geometry_data;
 

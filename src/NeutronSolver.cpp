@@ -308,8 +308,8 @@ namespace solver {
 
 
   void NeutronSolver::solve_eigenvalue_problem(bool is_adjoint) {
-    const double tol = 1e-8;
-    const unsigned int maxiter = 500;
+    const double tol = parameters.eigen_tolerance;
+    const unsigned int maxiter = parameters.eigen_max_iterations;
     double error = 1.0;
     unsigned int iter = 1;
 
@@ -421,7 +421,7 @@ namespace solver {
           local_group_error_sum += goal_oriented_cell_error;
 
           // h refinement if the group is thermic (most 2 thermic groups)
-          if (g >= energy_groups.size() - 2)
+          if (g >= energy_groups.size() - 2) // TODO parametric number + goal
             estimates.h_refinement_estimators(index) += goal_oriented_cell_error;
         }
       }
@@ -439,7 +439,7 @@ namespace solver {
       const unsigned int n_vect_bits = 8 * sizeof(double) * n_vect_doubles;
       
       pcout << "===========================================" << std::endl;
-      pcout << "RUNNING BENCHMARK " << bench_name << std::endl;
+      pcout << "RUNNING BENCHMARK " << parameters.benchmark << std::endl;
       pcout << "Running with " << n_mpi_procs << " MPI process(es)" << std::endl;
       pcout << "Vectorization over " << n_vect_doubles << " doubles = " << n_vect_bits << " bits (" << Utilities::System::get_current_vectorization_level() << ')' << std::endl;
       pcout << "===========================================" << std::endl << std::endl << std::endl;
@@ -454,9 +454,9 @@ namespace solver {
     // Create energy groups with degree 1
     std::vector<unsigned int> group_degrees(material_data.get_n_groups(), 1);
     for (unsigned int group = 0; group < material_data.get_n_groups(); ++group) 
-      energy_groups.emplace_back(std::make_unique<solver::EnergyGroup<dim>>(group, group_degrees[group], material_data, geometry_data, triangulation, mapping));
+      energy_groups.emplace_back(std::make_unique<solver::EnergyGroup<dim>>(group, group_degrees[group], parameters, material_data, geometry_data, triangulation, mapping));
 
-    const unsigned int n_cycles = 5;
+    const unsigned int n_cycles = parameters.n_cycles;
     for (unsigned int cycle = 0; cycle < n_cycles; ++cycle) {
       pcout << "===========================================" << std::endl;
       pcout << "Starting cycle " << cycle << ':' << std::endl;
@@ -484,18 +484,24 @@ namespace solver {
       ErrorEstimates errors;
       compute_weighted_error(errors);
 
-      GridRefinement::refine_and_coarsen_fixed_number(
-        *triangulation,
-        errors.h_refinement_estimators,
-        0.3,
-        0.03
-      );
+      // h-refinement set flags
+      if (parameters.h_ref_type == "adaptive") {
+        GridRefinement::refine_and_coarsen_fixed_number(
+          *triangulation,
+          errors.h_refinement_estimators,
+          0.3,
+          0.03
+        );
+      }
+      else if (parameters.h_ref_type == "global") {
+        triangulation->set_all_refine_flags();
+      }
 
+      // Prepare h-transfer
       for (const auto &group : energy_groups)
         group->prepare_h_transfer();
 
       triangulation->execute_coarsening_and_refinement();
-      // triangulation->refine_global(1);
 
       // h-refinement and p-refinement evaluation
       float max_error = *std::max_element(errors.global_group_errors.begin(), errors.global_group_errors.end());
@@ -505,7 +511,7 @@ namespace solver {
         float threshold = 0.5f * static_cast<float>(std::pow((g + 1.0) / (energy_groups.size() + 1.0), 1.0)) * max_error;
         pcout << "Group " << g << " Adjoint-Weighted Error: " << errors.global_group_errors[g] << " | Threshold: " << threshold << std::endl;
         
-        if (errors.global_group_errors[g] > threshold && energy_groups[g]->get_degree() < max_degree && false) { 
+        if (errors.global_group_errors[g] > threshold && energy_groups[g]->get_degree() < parameters.max_p_degree) {
           pcout << "  -> Increasing p-degree to " << energy_groups[g]->get_degree() + 1 << std::endl;
           energy_groups[g]->set_degree(energy_groups[g]->get_degree() + 1);
         }
@@ -517,7 +523,7 @@ namespace solver {
 
     // Print results
     for (unsigned int group = 0; group < material_data.get_n_groups(); ++group)
-      energy_groups[group]->output_results(bench_name);
+      energy_groups[group]->output_results();
     
   }
 

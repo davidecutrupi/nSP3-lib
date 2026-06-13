@@ -1,5 +1,6 @@
 #pragma once
 
+#include "SolverParameters.hpp"
 #include "GeometryData.hpp"
 #include "GlobalTimer.hpp"
 #include "MaterialData.hpp"
@@ -26,16 +27,15 @@ namespace solver {
   };
 
   constexpr unsigned int dim = 2;
-  constexpr unsigned int max_degree = 5;
 
   class NeutronSolver {
   public:
     using BlockVectorType = dealii::LinearAlgebra::distributed::BlockVector<double>;
     
-    NeutronSolver(const std::string &bench_name) :
-      bench_name(bench_name),
-      material_data(data::MaterialData::from_file("../benchmarks/"  + bench_name + ".json")),
-      geometry_data(data::GeometryData::from_file("../benchmarks/"  + bench_name + ".json")),
+    NeutronSolver(const SolverParameters &parameters) :
+      parameters(parameters),
+      material_data(data::MaterialData::from_file("../benchmarks/" + parameters.benchmark + ".json")),
+      geometry_data(data::GeometryData::from_file("../benchmarks/" + parameters.benchmark + ".json")),
       mpi_size(dealii::Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)),
       mpi_rank(dealii::Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)),
       pcout(std::cout, mpi_rank == 0)
@@ -62,7 +62,7 @@ namespace solver {
     double get_total_fission_source(bool) const;
     void compute_weighted_error(ErrorEstimates &) const;
 
-    const std::string &bench_name;
+    const SolverParameters parameters;
     const data::MaterialData material_data;
     const data::GeometryData geometry_data;
     

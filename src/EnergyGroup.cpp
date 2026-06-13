@@ -316,7 +316,7 @@ namespace solver {
   void EnergyGroup<dim>::solve(bool is_adjoint) {
     TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::Solve");
 
-    SolverControl solver_control(1000, 1e-8);
+    SolverControl solver_control(parameters.group_max_iterations, parameters.group_tolerance);
     
     try {
       if (!material_data.has_discontinuity_factors()) {
@@ -485,7 +485,7 @@ namespace solver {
 
 
   template <unsigned int dim>
-  void EnergyGroup<dim>::output_results(const std::string &bench_name) const {
+  void EnergyGroup<dim>::output_results() const {
     TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::Output");
     
     DataOut<dim> data_out;
@@ -521,7 +521,8 @@ namespace solver {
 
     data_out.build_patches();
     
-    const std::string filename = "../out/" + bench_name + "-" + Utilities::int_to_string(group, 2) + ".vtu";
+    const bool needs_separator = !parameters.output_directory.empty() && parameters.output_directory.back() != '/';
+    const std::string filename = parameters.output_directory + (needs_separator ? "/" : "") + parameters.benchmark + "-" + Utilities::int_to_string(group, 2) + ".vtu";
     std::ofstream output(filename);
     data_out.write_vtu(output);
   }

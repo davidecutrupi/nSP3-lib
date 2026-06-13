@@ -1,0 +1,18 @@
+set Benchmark = biblis
+set Output directory = ../out
+
+set FE type = DG
+
+set Refinement cycles = 2
+set Max polynomial degree = 5
+set Spatial Refinement Type = global
+
+subsection Eigenvalue solver
+  set Max iterations = 500
+  set Tolerance = 1e-8
+end
+
+subsection Group solver
+  set Max iterations = 1000
+  set Tolerance = 1e-8
+end
