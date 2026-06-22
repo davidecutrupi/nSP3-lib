@@ -152,6 +152,30 @@ namespace solver {
     mutable dealii::TrilinosWrappers::MPI::Vector temp_dst_double;
   };
 
+
+  template <unsigned int dim, typename number, typename OperatorType>
+  class CoarseMatrixBuilder {
+  public:
+    // Used with ZeroModeOperator and SecondModeOperator
+    template <typename T = OperatorType, typename std::enable_if<!std::is_same<T, SP3Operator<dim, number>>::value, int>::type = 0>
+    static void build(const dealii::DoFHandler<dim> &dof_handler, const OperatorType &level_operator, dealii::TrilinosWrappers::SparseMatrix &matrix) {
+      const dealii::IndexSet locally_owned_level_dofs = dof_handler.locally_owned_mg_dofs(0);
+      dealii::TrilinosWrappers::SparsityPattern dsp(locally_owned_level_dofs, MPI_COMM_WORLD);
+      dealii::MGTools::make_flux_sparsity_pattern(dof_handler, dsp, 0);
+      dsp.compress();
+      
+      matrix.reinit(dsp);
+      level_operator.compute_matrix(matrix);
+      matrix.compress(dealii::VectorOperation::add);
+    }
+
+    // Used with SP3Operator
+    static void build(const dealii::DoFHandler<dim> &dof_handler, const SP3Operator<dim, number> &level_operator, dealii::TrilinosWrappers::SparseMatrix &matrix) {
+      level_operator.compute_matrix(dof_handler, matrix);
+    }
+  };
+
+
   template <unsigned int dim, typename number>
   class SP3BlockMGTransfer : public dealii::MGTransferBase<dealii::LinearAlgebra::distributed::BlockVector<number>> {
   public:
