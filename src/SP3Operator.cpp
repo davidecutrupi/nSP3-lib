@@ -83,7 +83,7 @@ namespace solver {
   template <unsigned int dim, typename number>
   types::global_dof_index SP3Operator<dim, number>::m() const {
     Assert(data.get() != nullptr, StandardExceptions::ExcNotInitialized());
-    return data->get_vector_partitioner(dof_index)->size();
+    return 2 * data->get_vector_partitioner(dof_index)->size();
   }
 
 
