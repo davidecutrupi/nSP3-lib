@@ -4,6 +4,7 @@
 #include <deal.II/matrix_free/fe_evaluation.h>
 #include <deal.II/matrix_free/tools.h>
 
+#include <deal.II/base/types.h>
 #include <deal.II/base/exceptions.h>
 #include <deal.II/base/vectorization.h>
 #include <deal.II/lac/affine_constraints.h>
@@ -616,11 +617,21 @@ namespace solver {
       std::vector<types::global_dof_index> cols;
       
       for (const auto row : locally_owned_scalar_dofs) {
+        Assert(row < scalar_sparsity.n_rows(), ExcInternalError());
+        Assert(scalar_sparsity.row_is_stored_locally(row), ExcMessage("Trying to read a non-locally stored Trilinos sparsity row."));
+
+        const auto row_length = scalar_sparsity.row_length(row);
+
+        if (row_length == static_cast<types::global_dof_index>(-1) || row_length == 0)
+          continue;
+
         cols.clear();
-        for (auto entry = scalar_sparsity.begin(row); entry != scalar_sparsity.end(row); ++entry)
+        cols.reserve(row_length);
+
+        auto entry = scalar_sparsity.begin(row);
+        for (types::global_dof_index k = 0; k < row_length; ++k, ++entry)
           cols.push_back(entry->column() + col_offset);
-        if (!cols.empty())
-          block_sparsity.add_entries(row + row_offset, cols.begin(), cols.end(), true);
+        block_sparsity.add_entries(row + row_offset, cols.begin(), cols.end(), true);
       }
     };
    
@@ -641,16 +652,28 @@ namespace solver {
       std::vector<TrilinosScalar> vals;
 
       for (const auto row : locally_owned_scalar_dofs) {
+        Assert(row < block.m(), ExcInternalError());
+        Assert(block.in_local_range(row), ExcMessage("Trying to read a non-local Trilinos matrix row."));
+
+        const auto row_length = block.row_length(row);
+        if (row_length == 0)
+          continue;
+
         cols.clear();
         vals.clear();
+        cols.reserve(row_length);
+        vals.reserve(row_length);
 
-        for (auto entry = block.begin(row); entry != block.end(row); ++entry) {
-          const auto value = entry->value();
+        auto entry = block.begin(row);
+        for (unsigned int k = 0; k < row_length; ++k, ++entry) {
+          const TrilinosScalar value = entry->value();
+
           if (value != 0.0) {
             cols.push_back(entry->column() + col_offset);
             vals.push_back(value);
           }
         }
+
         if (!cols.empty())
           matrix.add(row + row_offset, cols.size(), cols.data(), vals.data(), true, true);
       }
