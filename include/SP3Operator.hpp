@@ -46,6 +46,7 @@ namespace solver {
     number get_penalty_factor() const;
   
     void vmult(BlockVectorType &, const BlockVectorType &) const;
+    void vmult_add(BlockVectorType &, const BlockVectorType &) const;
     void Tvmult(BlockVectorType &, const BlockVectorType &) const;
     void Tvmult_add(BlockVectorType &, const BlockVectorType &) const;
 

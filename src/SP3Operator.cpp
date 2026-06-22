@@ -45,8 +45,8 @@ namespace solver {
       for (unsigned int v = 0; v < n_active; ++v) {
         auto cell_iterator = data->get_cell_iterator(cell_batch, v, dof_index);
         types::material_id mat_id = cell_iterator->material_id();
-        diff_batch[v] = material_data.get_diffusion(mat_id, dof_index);
-        sig_rem_batch[v] = material_data.get_sigma_rem(mat_id, dof_index);
+        diff_batch[v] = number(material_data.get_diffusion(mat_id, dof_index));
+        sig_rem_batch[v] = number(material_data.get_sigma_rem(mat_id, dof_index));
       }
 
       diff_coef[cell_batch] = diff_batch;
@@ -89,7 +89,7 @@ namespace solver {
 
   template <unsigned int dim, typename number>
   number SP3Operator<dim, number>::get_penalty_factor() const {
-    return 2.0 * p_degree * (p_degree + 1);
+    return number(2.0) * p_degree * (p_degree + 1);
   }
 
 
@@ -110,6 +110,22 @@ namespace solver {
 
 
   template <unsigned int dim, typename number>
+  void SP3Operator<dim, number>::vmult_add(BlockVectorType &dst, const BlockVectorType &src) const {
+    data->loop(
+      &SP3Operator::apply_cell,
+      &SP3Operator::apply_face,
+      &SP3Operator::apply_boundary,
+      this,
+      dst,
+      src,
+      false, // Do not set dst to zero
+      MatrixFree<dim, number>::DataAccessOnFaces::gradients,
+      MatrixFree<dim, number>::DataAccessOnFaces::gradients
+    );
+  }
+
+
+  template <unsigned int dim, typename number>
   void SP3Operator<dim, number>::Tvmult(BlockVectorType &dst, const BlockVectorType &src) const {
     data->loop(
       &SP3Operator::apply_cell,
@@ -119,6 +135,22 @@ namespace solver {
       dst,
       src,
       true, // Set dst to zero
+      MatrixFree<dim, number>::DataAccessOnFaces::gradients,
+      MatrixFree<dim, number>::DataAccessOnFaces::gradients
+    );
+  }
+
+
+  template <unsigned int dim, typename number>
+  void SP3Operator<dim, number>::Tvmult_add(BlockVectorType &dst, const BlockVectorType &src) const {
+    data->loop(
+      &SP3Operator::apply_cell,
+      &SP3Operator::apply_face_T,
+      &SP3Operator::apply_boundary,
+      this,
+      dst,
+      src,
+      false, // Do not set dst to zero
       MatrixFree<dim, number>::DataAccessOnFaces::gradients,
       MatrixFree<dim, number>::DataAccessOnFaces::gradients
     );
@@ -197,7 +229,7 @@ namespace solver {
       // Take maximum between D+ an D-
       VectorizedArray<number> d_max = std::max(half_d_in, half_d_out) * number(2.0);
       (void) d_max;
-      const number epsilon = 1e-15;
+      const number epsilon = std::numeric_limits<number>::epsilon();
       VectorizedArray<number> d_harmonic = (number(4.0) * half_d_in * half_d_out) / (half_d_in + half_d_out + epsilon);
       (void) d_harmonic;
 
@@ -353,7 +385,7 @@ namespace solver {
       AssertThrow(bc.type != data::GeometryData::BoundaryConditions::BoundaryConditionType::Dirichlet, ExcMessage("Dirichlet boundary conditions are not implemented for SP3Operator."));
 
       // Evaluate mass matrix using albedo parameter
-      const VectorizedArray<number> albedo_factor = (1 - bc.param) / (1 + bc.param);
+      const VectorizedArray<number> albedo_factor = number((1.0 - bc.param) / (1.0 + bc.param));
       const VectorizedArray<number> m11 = (1.0 / 2.0) * albedo_factor;
       const VectorizedArray<number> m12 = - (1.0 / 8.0) * albedo_factor;
       const VectorizedArray<number> m22 = (7.0 / 24.0) * albedo_factor;
@@ -658,3 +690,7 @@ namespace solver {
 template class solver::SP3Operator<3u, double>;
 template class solver::SP3Operator<2u, double>;
 template class solver::SP3Operator<1u, double>;
+
+template class solver::SP3Operator<3u, float>;
+template class solver::SP3Operator<2u, float>;
+template class solver::SP3Operator<1u, float>;
