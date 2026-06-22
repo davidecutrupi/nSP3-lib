@@ -97,10 +97,15 @@ namespace solver {
       phi_src.reinit(cell);
       phi_dst.reinit(cell);
       phi_src.gather_evaluate(src, EvaluationFlags::values);
-      integrate_cell_physics(phi_src, phi_dst, cell);
+
+      const VectorizedArray<number> m12 = phi_src.read_cell_data(sigma_rem) * -(2.0 / 3.0);
+      for (const unsigned int q : phi_src.quadrature_point_indices())
+        phi_dst.submit_value(phi_src.get_value(q) * m12, q);
+
       phi_dst.integrate_scatter(EvaluationFlags::values, dst);
     }
   }
+
 
   template <unsigned int dim, typename number>
   void CouplingOperator<dim, number>::apply_face(const MatrixFree<dim, number> &, VectorType &, const VectorType &, const std::pair<unsigned int, unsigned int> &) const {
@@ -117,33 +122,19 @@ namespace solver {
       phi_inner_src.reinit(face);
       phi_inner_dst.reinit(face);
       phi_inner_src.gather_evaluate(src, EvaluationFlags::values);
-      integrate_boundary_physics(phi_inner_src, phi_inner_dst);
+
+      // Check b.c. (only albedo supported at now)
+      const types::boundary_id boundary_id = phi_inner_src.boundary_id();
+      data::GeometryData::BoundaryConditions bc = geometry_data.get_boundary_condition(boundary_id);
+      AssertThrow(bc.type != data::GeometryData::BoundaryConditions::BoundaryConditionType::Dirichlet, ExcMessage("Dirichlet boundary conditions are not implemented for CouplingOperator."));
+
+      const VectorizedArray<number> albedo_factor = (1 - bc.param) / (1 + bc.param);
+      const VectorizedArray<number> m12 = - (1.0 / 8.0) * albedo_factor;
+
+      for (const unsigned int q : phi_inner_src.quadrature_point_indices())
+        phi_inner_dst.submit_value(phi_inner_src.get_value(q) * m12, q);
+
       phi_inner_dst.integrate_scatter(EvaluationFlags::values, dst);
-    }
-  }
-
-
-  template <unsigned int dim, typename number>
-  void CouplingOperator<dim, number>::integrate_cell_physics(FEEval &phi_src, FEEval &phi_dst, const unsigned int cell) const {
-    const VectorizedArray<number> m12 = material_cache->sigma_rem[cell] * -(2.0 / 3.0);
-    for (const unsigned int q : phi_src.quadrature_point_indices()) {
-      phi_dst.submit_value(phi_src.get_value(q) * m12, q);
-    }
-  }
-
-
-  template <unsigned int dim, typename number>
-  void CouplingOperator<dim, number>::integrate_boundary_physics(FEFaceEval &phi_src, FEFaceEval &phi_dst) const {
-    // Check b.c. (only albedo supported at now)
-    const types::boundary_id boundary_id = phi_src.boundary_id();
-    data::GeometryData::BoundaryConditions bc = geometry_data.get_boundary_condition(boundary_id);
-    AssertThrow(bc.type != data::GeometryData::BoundaryConditions::BoundaryConditionType::Dirichlet, ExcMessage("Dirichlet boundary conditions are not implemented for CouplingOperator."));
-    
-    const VectorizedArray<number> albedo_factor = (1 - bc.param) / (1 + bc.param);
-    const VectorizedArray<number> m12 = - (1.0 / 8.0) * albedo_factor;
-
-    for (const unsigned int q : phi_src.quadrature_point_indices()) {
-      phi_dst.submit_value(phi_src.get_value(q) * m12, q);
     }
   }
 

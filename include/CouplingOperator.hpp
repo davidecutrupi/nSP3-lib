@@ -46,8 +46,6 @@ namespace solver {
   
     using FEEval = dealii::FEEvaluation<dim, -1, 0, 1, number>;
     using FEFaceEval = dealii::FEFaceEvaluation<dim, -1, 0, 1, number>;
-    void integrate_cell_physics(FEEval &, FEEval &, const unsigned int) const;
-    void integrate_boundary_physics(FEFaceEval &, FEFaceEval &) const;
 
     std::shared_ptr<const dealii::MatrixFree<dim, number>> data;
 
