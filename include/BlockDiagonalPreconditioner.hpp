@@ -1,25 +1,31 @@
 #pragma once
 
+#include <deal.II/lac/la_parallel_block_vector.h>
+#include <deal.II/lac/la_parallel_vector.h>
+
 #include <memory>
 
 namespace solver {
 
-  template <typename BlockVectorType, typename InnerPreconditionerZero, typename InnerPreconditionerSecond>
+  template <typename number>
   class BlockDiagonalPreconditioner {
-  
   public:
-    BlockDiagonalPreconditioner(std::shared_ptr<const InnerPreconditionerZero> prec_zero, std::shared_ptr<const InnerPreconditionerSecond> prec_second) :
-      prec_zero(prec_zero),
-      prec_second(prec_second)
-    {}
+    using VectorType = dealii::LinearAlgebra::distributed::Vector<number>;
+    using BlockVectorType = dealii::LinearAlgebra::distributed::BlockVector<number>;
+
+    void initialize(const VectorType &, const VectorType &, const VectorType &);
+    void clear();
+
+    dealii::types::global_dof_index m() const;
+    dealii::types::global_dof_index n() const;
 
     void vmult(BlockVectorType &, const BlockVectorType &) const;
     void Tvmult(BlockVectorType &, const BlockVectorType &) const;
 
   private:
-    std::shared_ptr<const InnerPreconditionerZero> prec_zero;
-    std::shared_ptr<const InnerPreconditionerSecond> prec_second;
-
+    VectorType inv00;
+    VectorType inv02;
+    VectorType inv22;
   };
 
 }
