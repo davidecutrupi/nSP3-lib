@@ -1,5 +1,6 @@
 #pragma once
 
+#include "SP3Operator.hpp"
 
 #include <deal.II/base/exception_macros.h>
 #include <deal.II/base/mg_level_object.h>
@@ -16,9 +17,13 @@
 #include <deal.II/lac/trilinos_vector.h>
 
 #include <deal.II/multigrid/mg_base.h>
+#include <deal.II/multigrid/mg_tools.h>
+#include <deal.II/multigrid/mg_transfer_matrix_free.h>
 
+#include <array>
 #include <vector>
 #include <memory>
+#include <type_traits>
 
 
 namespace solver {
@@ -146,3 +151,97 @@ namespace solver {
     mutable dealii::TrilinosWrappers::MPI::Vector temp_src_double;
     mutable dealii::TrilinosWrappers::MPI::Vector temp_dst_double;
   };
+
+  template <unsigned int dim, typename number>
+  class SP3BlockMGTransfer : public dealii::MGTransferBase<dealii::LinearAlgebra::distributed::BlockVector<number>> {
+  public:
+    using VectorType = dealii::LinearAlgebra::distributed::Vector<number>;
+    using BlockVectorType = dealii::LinearAlgebra::distributed::BlockVector<number>;
+
+    void build(const dealii::DoFHandler<dim> &dof_handler, const std::vector<std::shared_ptr<const dealii::Utilities::MPI::Partitioner>> &external_partitioners) {
+      scalar_transfer.build(dof_handler, external_partitioners);
+
+      const unsigned int max_level = dof_handler.get_triangulation().n_global_levels() - 1;
+      for (unsigned int block = 0; block < n_blocks; ++block) {
+        copy_to_mg_scratch[block].resize(0, max_level);
+        copy_from_mg_scratch[block].resize(0, max_level);
+
+        for (unsigned int level = 0; level <= max_level; ++level) {
+          if (level < external_partitioners.size() && external_partitioners[level]) {
+            copy_to_mg_scratch[block][level].reinit(external_partitioners[level]);
+            copy_from_mg_scratch[block][level].reinit(external_partitioners[level]);
+          }
+        }
+      }
+    }
+
+    void prolongate(const unsigned int to_level, BlockVectorType &dst, const BlockVectorType &src) const override {
+      for (unsigned int block = 0; block < n_blocks; ++block)
+        scalar_transfer.prolongate(to_level, dst.block(block), src.block(block));
+    }
+
+    void prolongate_and_add(const unsigned int to_level, BlockVectorType &dst, const BlockVectorType &src) const override {
+      for (unsigned int block = 0; block < n_blocks; ++block)
+        scalar_transfer.prolongate_and_add(to_level, dst.block(block), src.block(block));
+    }
+
+    void restrict_and_add(const unsigned int from_level, BlockVectorType &dst, const BlockVectorType &src) const override {
+      for (unsigned int block = 0; block < n_blocks; ++block)
+        scalar_transfer.restrict_and_add(from_level, dst.block(block), src.block(block));
+    }
+
+    template <typename BlockVectorType2>
+    void copy_to_mg(const dealii::DoFHandler<dim> &dof_handler, dealii::MGLevelObject<BlockVectorType> &dst, const BlockVectorType2 &src) const {
+      for (unsigned int block = 0; block < n_blocks; ++block)
+        scalar_transfer.copy_to_mg(dof_handler, copy_to_mg_scratch[block], src.block(block));
+
+      for (unsigned int level = dst.min_level(); level <= dst.max_level(); ++level) {
+        if (dst[level].n_blocks() != n_blocks)
+          dst[level].reinit(n_blocks);
+
+        for (unsigned int block = 0; block < n_blocks; ++block) {
+          ensure_layout(dst[level].block(block), copy_to_mg_scratch[block][level]);
+          dst[level].block(block) = copy_to_mg_scratch[block][level];
+        }
+
+        dst[level].collect_sizes();
+      }
+    }
+
+    template <typename BlockVectorType2>
+    void copy_from_mg(const dealii::DoFHandler<dim> &dof_handler, BlockVectorType2 &dst, const dealii::MGLevelObject<BlockVectorType> &src) const {
+      for (unsigned int block = 0; block < n_blocks; ++block) {
+        copy_block_to_scalar_mg(block, src);
+        scalar_transfer.copy_from_mg(dof_handler, dst.block(block), copy_from_mg_scratch[block]);
+      }
+    }
+
+    template <typename BlockVectorType2>
+    void copy_from_mg_add(const dealii::DoFHandler<dim> &dof_handler, BlockVectorType2 &dst, const dealii::MGLevelObject<BlockVectorType> &src) const {
+      for (unsigned int block = 0; block < n_blocks; ++block) {
+        copy_block_to_scalar_mg(block, src);
+        scalar_transfer.copy_from_mg_add(dof_handler, dst.block(block), copy_from_mg_scratch[block]);
+      }
+    }
+
+  private:
+    static constexpr unsigned int n_blocks = 2; // TODO create a global struct SP3Traits and use n_modes=2 everywhere in the code instead of hardcode 2
+
+    void ensure_layout(VectorType &vector, const VectorType &prototype) const {
+      if (vector.size() != prototype.size() || vector.locally_owned_size() != prototype.locally_owned_size() || vector.get_partitioner().get() != prototype.get_partitioner().get())
+        vector.reinit(prototype, true);
+    }
+
+    void copy_block_to_scalar_mg(const unsigned int block, const dealii::MGLevelObject<BlockVectorType> &src) const {
+      for (unsigned int level = src.min_level(); level <= src.max_level(); ++level) {
+        ensure_layout(copy_from_mg_scratch[block][level], src[level].block(block));
+        copy_from_mg_scratch[block][level] = src[level].block(block);
+      }
+    }
+
+    dealii::MGTransferMatrixFree<dim, number> scalar_transfer;
+    mutable std::array<dealii::MGLevelObject<VectorType>, n_blocks> copy_to_mg_scratch;
+    mutable std::array<dealii::MGLevelObject<VectorType>, n_blocks> copy_from_mg_scratch;
+  };
+
+}
