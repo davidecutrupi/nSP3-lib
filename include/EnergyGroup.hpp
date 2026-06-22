@@ -92,6 +92,7 @@ namespace solver {
 
   private:
     void setup_multigrid();
+    void setup_coupled_multigrid();
     void setup_coefficients(std::shared_ptr<const dealii::MatrixFree<dim, double>>);
     void setup_feevals();
 
@@ -135,12 +136,19 @@ namespace solver {
     std::shared_ptr<InnerSolverSecond> inner_solver_second;
     
     // Global operator and preconditioner
-    using Preconditioner = BlockGSPreconditioner<BlockVectorType<double>, InnerSolverZero, InnerSolverSecond, CouplingOperator<dim, double>>;
-    using BlockDiagPreconditioner = BlockDiagonalPreconditioner<BlockVectorType<double>, InnerPreconditionerZero, InnerPrecontionerSecond>;
+    using UncoupledPreconditioner = BlockGSPreconditioner<BlockVectorType<double>, InnerSolverZero, InnerSolverSecond, CouplingOperator<dim, double>>;
+    using CoupledMGPreconditioner = MultigridPreconditioner<
+      dim,
+      float,
+      SP3Operator<dim, float>,
+      BlockVectorType<float>,
+      SP3BlockMGTransfer<dim, float>,
+      BlockDiagonalPreconditioner<float>,
+      MGCoarseGridTrilinosBlockWrapper<dim, float>>;
     
     std::shared_ptr<SP3Operator<dim, double>> sp3_operator;
-    std::shared_ptr<Preconditioner> preconditioner;
-    std::shared_ptr<BlockDiagPreconditioner> block_diag_preconditioner;
+    std::shared_ptr<UncoupledPreconditioner> uncoupled_preconditioner;
+    std::shared_ptr<CoupledMGPreconditioner> coupled_mg_preconditioner;
 
     BlockVectorType<double> solution;
     BlockVectorType<double> solution_old;

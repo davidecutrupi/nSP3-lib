@@ -112,17 +112,11 @@ namespace solver {
       inner_solver_second = std::make_shared<InnerSolverSecond>(second_mode_operator, inner_preconditioner_second, 10, 1e-1);
     
       // Setup block gauss-seidel preconditioner
-      preconditioner = std::make_shared<Preconditioner>(inner_solver_zero, inner_solver_second, coupling_operator);
-      preconditioner->initialize(solution);
+      uncoupled_preconditioner = std::make_shared<UncoupledPreconditioner>(inner_solver_zero, inner_solver_second, coupling_operator);
+      uncoupled_preconditioner->initialize(solution);
     }
     else {
-      // Setup inner preconditioners
-      inner_preconditioner_zero = std::make_shared<InnerPreconditionerZero>();
-      inner_preconditioner_second = std::make_shared<InnerPrecontionerSecond>();
-      setup_multigrid();
-
-      // Setup block diagonal preconditioner
-      block_diag_preconditioner = std::make_shared<BlockDiagPreconditioner>(inner_preconditioner_zero, inner_preconditioner_second);
+      setup_coupled_multigrid();
     }
   
     setup_feevals();
@@ -188,7 +182,7 @@ namespace solver {
       // Create the level operator and add to level_operators
       level_zero_operators[level] = std::make_shared<ZeroModeOperator<dim, float>>(p_degree, 0, geometry_data);
       level_zero_operators[level]->initialize(mg_mf_storage, mg_material_manager->get_cache(level), material_data);
-      
+
       level_second_operators[level] = std::make_shared<SecondModeOperator<dim, float>>(p_degree, 0, geometry_data);
       level_second_operators[level]->initialize(mg_mf_storage, mg_material_manager->get_cache(level), material_data);
 
@@ -200,6 +194,54 @@ namespace solver {
 
     inner_preconditioner_zero->initialize(dof_handler, level_zero_operators, mg_transfer);
     inner_preconditioner_second->initialize(dof_handler, level_second_operators, mg_transfer);
+  }
+
+
+  template <unsigned int dim>
+  void EnergyGroup<dim>::setup_coupled_multigrid() {
+    TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::Setup::Multigrid");
+
+    const unsigned int nlevels = triangulation->n_global_levels();
+    
+    std::vector<std::shared_ptr<SP3Operator<dim, float>>> level_sp3_operators(nlevels);
+    std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> partitioners(nlevels);
+
+    AffineConstraints<float> dummy;
+    dummy.close();
+
+    // Setup mg material manager
+    mg_material_manager = std::make_shared<CrossSectionManager<dim, float>>();
+    mg_material_manager->setup_levels(nlevels, material_data.get_n_groups());
+
+    for (unsigned int level = 0; level < nlevels; ++level) {
+      typename MatrixFree<dim, float>::AdditionalData additional_data;
+      additional_data.tasks_parallel_scheme = MatrixFree<dim, float>::AdditionalData::none;
+      additional_data.mapping_update_flags = (update_values | update_gradients | update_JxW_values);
+      additional_data.mapping_update_flags_inner_faces = (update_values | update_gradients | update_JxW_values | update_normal_vectors | update_inverse_jacobians);
+      additional_data.mapping_update_flags_boundary_faces = (update_values | update_JxW_values);
+      additional_data.mg_level = level;
+
+      // TODO conviene fare un vector di storages che contiene gli storage di ogni livello della triangulation 
+      // (ognuno con una lista di dof hanlder di ogni gruppo) direttamente nella classe NeutronSolver?
+      // Cioè conviene fare come per lo storage di livello? 
+      const auto mg_mf_storage = std::make_shared<MatrixFree<dim, float>>(); 
+      mg_mf_storage->reinit(mapping, dof_handler, dummy, QGauss<1>(fe->degree + 1), additional_data);
+      
+      // Populate coefficients
+      mg_material_manager->update(*mg_mf_storage, level, group, material_data);
+
+      // Create the SP3 level operator and add to level_operators
+      level_sp3_operators[level] = std::make_shared<SP3Operator<dim, float>>(p_degree, 0, geometry_data);
+      level_sp3_operators[level]->initialize(mg_mf_storage, mg_material_manager->get_cache(level), material_data);
+
+      partitioners[level] = mg_mf_storage->get_vector_partitioner();
+    }
+
+    std::shared_ptr<SP3BlockMGTransfer<dim, float>> mg_transfer = std::make_shared<SP3BlockMGTransfer<dim, float>>();
+    mg_transfer->build(dof_handler, partitioners);
+
+    coupled_mg_preconditioner = std::make_shared<CoupledMGPreconditioner>();
+    coupled_mg_preconditioner->initialize(dof_handler, level_sp3_operators, mg_transfer);
   }
 
 
@@ -322,19 +364,19 @@ namespace solver {
       if (!material_data.has_discontinuity_factors()) {
         SolverCG<BlockVectorType<double>> solver(solver_control);
         if (is_adjoint)
-          solver.solve(*sp3_operator, adjoint_solution, system_rhs, *block_diag_preconditioner);
+          solver.solve(*sp3_operator, adjoint_solution, system_rhs, *coupled_mg_preconditioner);
         else
-          solver.solve(*sp3_operator, solution, system_rhs, *block_diag_preconditioner);
+          solver.solve(*sp3_operator, solution, system_rhs, *coupled_mg_preconditioner);
       }
       else {
         SolverFGMRES<BlockVectorType<double>> solver(solver_control);
         if (is_adjoint) {
           TransposeWrapper<SP3Operator<dim, double>, BlockVectorType<double>> tansp_op(*sp3_operator);
-          TransposeWrapper<Preconditioner, BlockVectorType<double>> tansp_prec(*preconditioner);
+          TransposeWrapper<UncoupledPreconditioner, BlockVectorType<double>> tansp_prec(*uncoupled_preconditioner);
           solver.solve(tansp_op, adjoint_solution, system_rhs, tansp_prec);
         }
         else 
-          solver.solve(*sp3_operator, solution, system_rhs, *preconditioner);
+          solver.solve(*sp3_operator, solution, system_rhs, *uncoupled_preconditioner);
       }
     } catch (const SolverControl::NoConvergence &exc) {
       std::cerr<<"Convergence not reached in solver!!"<<std::endl;
