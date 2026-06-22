@@ -37,10 +37,12 @@ namespace solver {
     
     diff_coef.resize(n_batches);
     sigma_rem.resize(n_batches);
+    disc_fact.resize(n_batches);
 
     for (unsigned int cell_batch = 0; cell_batch < n_batches; ++cell_batch) {
       VectorizedArray<number> diff_batch = 0.0;
       VectorizedArray<number> sig_rem_batch = 0.0;
+      VectorizedArray<number> disc_fact_batch = 0.0;
       
       const unsigned int n_active = data->n_active_entries_per_cell_batch(cell_batch);
       for (unsigned int v = 0; v < n_active; ++v) {
@@ -48,10 +50,12 @@ namespace solver {
         types::material_id mat_id = cell_iterator->material_id();
         diff_batch[v] = number(material_data.get_diffusion(mat_id, dof_index));
         sig_rem_batch[v] = number(material_data.get_sigma_rem(mat_id, dof_index));
+        disc_fact_batch[v] = number(material_data.get_discontinuity_factor(mat_id, dof_index));
       }
 
       diff_coef[cell_batch] = diff_batch;
       sigma_rem[cell_batch] = sig_rem_batch;
+      disc_fact[cell_batch] = disc_fact_batch;
     }
   }
 
@@ -218,8 +222,8 @@ namespace solver {
       phi2_outer.gather_evaluate(src.block(1), EvaluationFlags::values | EvaluationFlags::gradients);
 
       // Collect discontinuity factors of the cellls
-      const VectorizedArray<number> disc_fact_in = material_cache->inner_face_disc_fact_interior[phi0_inner.get_current_cell_index()];
-      const VectorizedArray<number> disc_fact_out = material_cache->inner_face_disc_fact_exterior[phi0_outer.get_current_cell_index()];
+      const VectorizedArray<number> disc_fact_in = phi0_inner.read_cell_data(disc_fact);
+      const VectorizedArray<number> disc_fact_out = phi0_outer.read_cell_data(disc_fact);
 
       // Collect diffusion coefficients of the cells
       const VectorizedArray<number> half_d_in = phi0_inner.read_cell_data(diff_coef) * number(0.5);
@@ -305,12 +309,12 @@ namespace solver {
       phi2_outer.gather_evaluate(src.block(1), EvaluationFlags::values | EvaluationFlags::gradients);
 
       // Collect discontinuity factors of the cellls
-      const VectorizedArray<number> disc_fact_in = material_cache->inner_face_disc_fact_interior[phi0_inner.get_current_cell_index()];
-      const VectorizedArray<number> disc_fact_out = material_cache->inner_face_disc_fact_exterior[phi0_outer.get_current_cell_index()];
+      const VectorizedArray<number> disc_fact_in = phi0_inner.read_cell_data(disc_fact);
+      const VectorizedArray<number> disc_fact_out = phi0_outer.read_cell_data(disc_fact);
 
       // Collect diffusion coefficients of the cells
-      const VectorizedArray<number> half_d_in = material_cache->inner_face_diffusion_interior[phi0_inner.get_current_cell_index()] * number(0.5);
-      const VectorizedArray<number> half_d_out = material_cache->inner_face_diffusion_exterior[phi0_outer.get_current_cell_index()] * number(0.5);
+      const VectorizedArray<number> half_d_in = phi0_inner.read_cell_data(diff_coef) * number(0.5);
+      const VectorizedArray<number> half_d_out = phi0_outer.read_cell_data(diff_coef) * number(0.5);
       const VectorizedArray<number> half_d22_in = half_d_in * (3.0 / 7.0);
       const VectorizedArray<number> half_d22_out = half_d_out * (3.0 / 7.0);
 
@@ -458,8 +462,8 @@ namespace solver {
 
     const VectorizedArray<number> sigma = d_max * get_penalty_factor() * inverse_length_normal_to_face * mode_scale;
 
-    const VectorizedArray<number> disc_fact_in = (mode == 0) ? material_cache->inner_face_disc_fact_interior[phi_inner.get_current_cell_index()] : VectorizedArray<number>(1.0);
-    const VectorizedArray<number> disc_fact_out = (mode == 0) ? material_cache->inner_face_disc_fact_exterior[phi_outer.get_current_cell_index()] : VectorizedArray<number>(1.0);
+    const VectorizedArray<number> disc_fact_in = (mode == 0) ? phi_inner.read_cell_data(disc_fact) : VectorizedArray<number>(1.0);
+    const VectorizedArray<number> disc_fact_out = (mode == 0) ? phi_outer.read_cell_data(disc_fact) : VectorizedArray<number>(1.0);
 
     for (const unsigned int q : phi_inner.quadrature_point_indices()) {
       const VectorizedArray<number> jump = disc_fact_in * phi_inner.get_value(q) - disc_fact_out * phi_outer.get_value(q);

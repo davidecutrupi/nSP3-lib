@@ -80,6 +80,7 @@ namespace solver {
 
     dealii::AlignedVector<dealii::VectorizedArray<number>> diff_coef;
     dealii::AlignedVector<dealii::VectorizedArray<number>> sigma_rem;
+    dealii::AlignedVector<dealii::VectorizedArray<number>> disc_fact;
 
     std::shared_ptr<const MaterialCache<number>> material_cache;
     std::shared_ptr<DiagonalPreconditionerType> inverse_diagonal;
