@@ -22,9 +22,10 @@ namespace solver {
   public:
     using VectorType = dealii::LinearAlgebra::distributed::Vector<number>;
 
-    SecondModeOperator(const unsigned int p_degree, const unsigned int dof_index, const data::GeometryData &geom_data) :
+    SecondModeOperator(const unsigned int p_degree, const unsigned int dof_index, const unsigned int group, const data::GeometryData &geom_data) :
       p_degree(p_degree),
       dof_index(dof_index),
+      energy_group(group),
       geometry_data(geom_data)
     {}
 
@@ -63,6 +64,7 @@ namespace solver {
 
     const unsigned int p_degree; 
     const unsigned int dof_index;
+    const unsigned int energy_group;
 
     const data::GeometryData &geometry_data;
 

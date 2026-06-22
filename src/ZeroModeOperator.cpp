@@ -37,8 +37,8 @@ namespace solver {
       for (unsigned int v = 0; v < n_active; ++v) {
         auto cell_iterator = data->get_cell_iterator(cell_batch, v, dof_index);
         types::material_id mat_id = cell_iterator->material_id();
-        diff_batch[v] = number(material_data.get_diffusion(mat_id, dof_index));
-        sig_rem_batch[v] = number(material_data.get_sigma_rem(mat_id, dof_index));
+        diff_batch[v] = number(material_data.get_diffusion(mat_id, energy_group));
+        sig_rem_batch[v] = number(material_data.get_sigma_rem(mat_id, energy_group));
       }
 
       diff_coef[cell_batch] = diff_batch;

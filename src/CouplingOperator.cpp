@@ -17,10 +17,27 @@ namespace solver {
 
 
   template <unsigned int dim, typename number>
-  void CouplingOperator<dim, number>::initialize(std::shared_ptr<const MatrixFree<dim, number>> data, std::shared_ptr<const MaterialCache<number>> material_cache) {
+  void CouplingOperator<dim, number>::initialize(std::shared_ptr<const MatrixFree<dim, number>> data, std::shared_ptr<const MaterialCache<number>> material_cache, const data::MaterialData &material_data) {
     clear();
     this->data = data;
     this->material_cache = material_cache;
+
+    const unsigned int n_batches = data->n_cell_batches() + data->n_ghost_cell_batches();
+
+    sigma_rem.resize(n_batches);
+
+    for (unsigned int cell_batch = 0; cell_batch < n_batches; ++cell_batch) {
+      VectorizedArray<number> sig_rem_batch = 0.0;
+
+      const unsigned int n_active = data->n_active_entries_per_cell_batch(cell_batch);
+      for (unsigned int v = 0; v < n_active; ++v) {
+        auto cell_iterator = data->get_cell_iterator(cell_batch, v, dof_index);
+        types::material_id mat_id = cell_iterator->material_id();
+        sig_rem_batch[v] = number(material_data.get_sigma_rem(mat_id, energy_group));
+      }
+
+      sigma_rem[cell_batch] = sig_rem_batch;
+    }
   }
 
 

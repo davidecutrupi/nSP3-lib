@@ -2,8 +2,11 @@
 
 #include "GeometryData.hpp"
 #include "CrossSectionManager.hpp"
+#include "MaterialData.hpp"
 
+#include <deal.II/base/aligned_vector.h>
 #include <deal.II/base/enable_observer_pointer.h>
+#include <deal.II/base/vectorization.h>
 
 #include <deal.II/matrix_free/matrix_free.h>
 #include <deal.II/matrix_free/fe_evaluation.h>
@@ -19,13 +22,14 @@ namespace solver {
   public:
     using VectorType = dealii::LinearAlgebra::distributed::Vector<number>;
 
-    CouplingOperator(const unsigned int dof_index, const data::GeometryData &geom_data) :
+    CouplingOperator(const unsigned int dof_index, const unsigned int group, const data::GeometryData &geom_data) :
       dof_index(dof_index),
+      energy_group(group),
       geometry_data(geom_data)
     {};
 
     void clear();
-    void initialize(std::shared_ptr<const dealii::MatrixFree<dim, number>>, std::shared_ptr<const MaterialCache<number>>);
+    void initialize(std::shared_ptr<const dealii::MatrixFree<dim, number>>, std::shared_ptr<const MaterialCache<number>>, const data::MaterialData &);
     std::shared_ptr<const dealii::Utilities::MPI::Partitioner> get_vector_partitioner() const;
     std::shared_ptr<const dealii::MatrixFree<dim, number>> get_matrix_free() const;
     void initialize_dof_vector(VectorType &) const;
@@ -48,7 +52,11 @@ namespace solver {
     std::shared_ptr<const dealii::MatrixFree<dim, number>> data;
 
     const unsigned int dof_index;
+    const unsigned int energy_group;
+    
     const data::GeometryData &geometry_data;
+
+    dealii::AlignedVector<dealii::VectorizedArray<number>> sigma_rem;
 
     std::shared_ptr<const MaterialCache<number>> material_cache;
   };

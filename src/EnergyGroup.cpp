@@ -80,7 +80,7 @@ namespace solver {
     setup_coefficients(system_mf_storage);
 
     // Setup SP3 operator
-    sp3_operator = std::make_shared<SP3Operator<dim, double>>(p_degree, group, geometry_data);
+    sp3_operator = std::make_shared<SP3Operator<dim, double>>(p_degree, group, group, geometry_data);
     sp3_operator->initialize(system_mf_storage, material_manager->get_cache(0), material_data);
 
     sp3_operator->initialize_dof_vector(solution);
@@ -91,16 +91,16 @@ namespace solver {
 
     if (material_data.has_discontinuity_factors()) {
       // Setup zero mode operator
-      zero_mode_operator = std::make_shared<ZeroModeOperator<dim, double>>(p_degree, group, geometry_data);
+      zero_mode_operator = std::make_shared<ZeroModeOperator<dim, double>>(p_degree, group, group, geometry_data);
       zero_mode_operator->initialize(system_mf_storage, material_manager->get_cache(0), material_data);
   
       // Setup second mode operator
-      second_mode_operator = std::make_shared<SecondModeOperator<dim, double>>(p_degree, group, geometry_data);
+      second_mode_operator = std::make_shared<SecondModeOperator<dim, double>>(p_degree, group, group, geometry_data);
       second_mode_operator->initialize(system_mf_storage, material_manager->get_cache(0), material_data);
   
       // Setup coupling operator
-      coupling_operator = std::make_shared<CouplingOperator<dim, double>>(group, geometry_data);
-      coupling_operator->initialize(system_mf_storage, material_manager->get_cache(0));
+      coupling_operator = std::make_shared<CouplingOperator<dim, double>>(group, group, geometry_data);
+      coupling_operator->initialize(system_mf_storage, material_manager->get_cache(0), material_data);
     
       // Setup inner preconditioners
       inner_preconditioner_zero = std::make_shared<InnerPreconditionerZero>();
@@ -180,10 +180,10 @@ namespace solver {
       mg_material_manager->update(*mg_mf_storage, level, group, material_data);
 
       // Create the level operator and add to level_operators
-      level_zero_operators[level] = std::make_shared<ZeroModeOperator<dim, float>>(p_degree, 0, geometry_data);
+      level_zero_operators[level] = std::make_shared<ZeroModeOperator<dim, float>>(p_degree, 0, group, geometry_data);
       level_zero_operators[level]->initialize(mg_mf_storage, mg_material_manager->get_cache(level), material_data);
 
-      level_second_operators[level] = std::make_shared<SecondModeOperator<dim, float>>(p_degree, 0, geometry_data);
+      level_second_operators[level] = std::make_shared<SecondModeOperator<dim, float>>(p_degree, 0, group, geometry_data);
       level_second_operators[level]->initialize(mg_mf_storage, mg_material_manager->get_cache(level), material_data);
 
       partitioners[level] = mg_mf_storage->get_vector_partitioner();
@@ -231,7 +231,7 @@ namespace solver {
       mg_material_manager->update(*mg_mf_storage, level, group, material_data);
 
       // Create the SP3 level operator and add to level_operators
-      level_sp3_operators[level] = std::make_shared<SP3Operator<dim, float>>(p_degree, 0, geometry_data);
+      level_sp3_operators[level] = std::make_shared<SP3Operator<dim, float>>(p_degree, 0, group, geometry_data);
       level_sp3_operators[level]->initialize(mg_mf_storage, mg_material_manager->get_cache(level), material_data);
 
       partitioners[level] = mg_mf_storage->get_vector_partitioner();
