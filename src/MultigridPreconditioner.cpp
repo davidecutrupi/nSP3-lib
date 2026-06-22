@@ -9,8 +9,15 @@
 namespace solver {
   using namespace dealii;
 
-  template <unsigned int dim, typename number, typename OperatorType>
-  void MultigridPreconditioner<dim, number, OperatorType>::clear() {
+  template <
+    unsigned int dim,
+    typename number,
+    typename OperatorType,
+    typename VectorType,
+    typename TransferType,
+    typename SmootherPreconditionerType,
+    typename CoarseWrapperType>
+  void MultigridPreconditioner<dim, number, OperatorType, VectorType, TransferType, SmootherPreconditionerType, CoarseWrapperType>::clear() {
     preconditioner.reset();
     multigrid.reset();
 
@@ -26,8 +33,15 @@ namespace solver {
   }
 
 
-  template <unsigned int dim, typename number, typename OperatorType>
-  void MultigridPreconditioner<dim, number, OperatorType>::initialize(const DoFHandler<dim> &dof_handler, const std::vector<std::shared_ptr<OperatorType>> &level_operators, std::shared_ptr<dealii::MGTransferMatrixFree<dim, number>> mg_transfer) {
+  template <
+    unsigned int dim,
+    typename number,
+    typename OperatorType,
+    typename VectorType,
+    typename TransferType,
+    typename SmootherPreconditionerType,
+    typename CoarseWrapperType>
+  void MultigridPreconditioner<dim, number, OperatorType, VectorType, TransferType, SmootherPreconditionerType, CoarseWrapperType>::initialize(const DoFHandler<dim> &dof_handler, const std::vector<std::shared_ptr<OperatorType>> &level_operators, std::shared_ptr<TransferType> mg_transfer) {
     clear();
 
     this->transfer = mg_transfer;
@@ -53,38 +67,42 @@ namespace solver {
     mg_smoother_wrapper = std::make_unique<LevelSmootherWrapper<VectorType, SmootherType>>();
     mg_smoother_wrapper->initialize(level_smoothers.get());
     
-    // Global index sets
-    IndexSet locally_owned_level_dofs = dof_handler.locally_owned_mg_dofs(0);
-    TrilinosWrappers::SparsityPattern dsp(locally_owned_level_dofs, MPI_COMM_WORLD);
-    MGTools::make_flux_sparsity_pattern(dof_handler, dsp, 0);
-    dsp.compress();
-
-    // Create the coarse block sparse matrix
     coarse_matrix = std::make_unique<TrilinosWrappers::SparseMatrix>();
-    coarse_matrix->reinit(dsp);
+    CoarseMatrixBuilder<dim, number, OperatorType>::build(dof_handler, *level_operators[0], *coarse_matrix);
 
-    level_operators[0]->compute_matrix(*coarse_matrix);
-    coarse_matrix->compress(VectorOperation::add);
-
-    mg_coarse_wrapper = std::make_unique<MGCoarseGridTrilinosWrapper<VectorType>>();
-    mg_coarse_wrapper->initialize(*coarse_matrix);
+    mg_coarse_wrapper = std::make_unique<CoarseWrapperType>();
+    mg_coarse_wrapper->initialize(*coarse_matrix, dof_handler);
 
     // In the end setup multigrid and precondtioner
     multigrid = std::make_unique<Multigrid<VectorType>>(*mg_matrix_wrapper, *mg_coarse_wrapper, *this->transfer, *mg_smoother_wrapper, *mg_smoother_wrapper);
-    preconditioner = std::make_unique<PreconditionMG<dim, VectorType, MGTransferMatrixFree<dim, number>>>(dof_handler, *multigrid, *this->transfer);
+    preconditioner = std::make_unique<PreconditionMG<dim, VectorType, TransferType>>(dof_handler, *multigrid, *this->transfer);
   }
 
 
-  template <unsigned int dim, typename number, typename OperatorType>
+  template <
+    unsigned int dim,
+    typename number,
+    typename OperatorType,
+    typename VectorType,
+    typename TransferType,
+    typename SmootherPreconditionerType,
+    typename CoarseWrapperType>
   template <typename OtherVectorType>
-  void MultigridPreconditioner<dim, number, OperatorType>::vmult(OtherVectorType &dst, const OtherVectorType &src) const {
+  void MultigridPreconditioner<dim, number, OperatorType, VectorType, TransferType, SmootherPreconditionerType, CoarseWrapperType>::vmult(OtherVectorType &dst, const OtherVectorType &src) const {
     preconditioner->vmult(dst, src);
   }
 
 
-  template <unsigned int dim, typename number, typename OperatorType>
+  template <
+    unsigned int dim,
+    typename number,
+    typename OperatorType,
+    typename VectorType,
+    typename TransferType,
+    typename SmootherPreconditionerType,
+    typename CoarseWrapperType>
   template <typename OtherVectorType>
-  void MultigridPreconditioner<dim, number, OperatorType>::Tvmult(OtherVectorType &dst, const OtherVectorType &src) const {
+  void MultigridPreconditioner<dim, number, OperatorType, VectorType, TransferType, SmootherPreconditionerType, CoarseWrapperType>::Tvmult(OtherVectorType &dst, const OtherVectorType &src) const {
     preconditioner->Tvmult(dst, src);
   }
 
@@ -126,3 +144,66 @@ template class solver::MultigridPreconditioner<1u, float, solver::SecondModeOper
 using MGPrecSecondFloat1 = solver::MultigridPreconditioner<1u, float, solver::SecondModeOperator<1u, float>>;
 template void MGPrecSecondFloat1::vmult<DoubleVector>(DoubleVector &dst, const DoubleVector &src) const;
 template void MGPrecSecondFloat1::Tvmult<DoubleVector>(DoubleVector &dst, const DoubleVector &src) const;
+
+
+#include "SP3Operator.hpp"
+#include "BlockDiagonalPreconditioner.hpp"
+using DoubleBlockVector = dealii::LinearAlgebra::distributed::BlockVector<double>;
+using FloatBlockVector = dealii::LinearAlgebra::distributed::BlockVector<float>;
+
+template class solver::MultigridPreconditioner<
+  1u,
+  float,
+  solver::SP3Operator<1u, float>,
+  FloatBlockVector,
+  solver::SP3BlockMGTransfer<1u, float>,
+  solver::BlockDiagonalPreconditioner<float>,
+  solver::MGCoarseGridTrilinosBlockWrapper<1u, float>>;
+using MGPrecSP3Float1 = solver::MultigridPreconditioner<
+  1u,
+  float,
+  solver::SP3Operator<1u, float>,
+  FloatBlockVector,
+  solver::SP3BlockMGTransfer<1u, float>,
+  solver::BlockDiagonalPreconditioner<float>,
+  solver::MGCoarseGridTrilinosBlockWrapper<1u, float>>;
+template void MGPrecSP3Float1::vmult<DoubleBlockVector>(DoubleBlockVector &dst, const DoubleBlockVector &src) const;
+template void MGPrecSP3Float1::Tvmult<DoubleBlockVector>(DoubleBlockVector &dst, const DoubleBlockVector &src) const;
+
+template class solver::MultigridPreconditioner<
+  2u,
+  float,
+  solver::SP3Operator<2u, float>,
+  FloatBlockVector,
+  solver::SP3BlockMGTransfer<2u, float>,
+  solver::BlockDiagonalPreconditioner<float>,
+  solver::MGCoarseGridTrilinosBlockWrapper<2u, float>>;
+using MGPrecSP3Float2 = solver::MultigridPreconditioner<
+  2u,
+  float,
+  solver::SP3Operator<2u, float>,
+  FloatBlockVector,
+  solver::SP3BlockMGTransfer<2u, float>,
+  solver::BlockDiagonalPreconditioner<float>,
+  solver::MGCoarseGridTrilinosBlockWrapper<2u, float>>;
+template void MGPrecSP3Float2::vmult<DoubleBlockVector>(DoubleBlockVector &dst, const DoubleBlockVector &src) const;
+template void MGPrecSP3Float2::Tvmult<DoubleBlockVector>(DoubleBlockVector &dst, const DoubleBlockVector &src) const;
+
+template class solver::MultigridPreconditioner<
+  3u,
+  float,
+  solver::SP3Operator<3u, float>,
+  FloatBlockVector,
+  solver::SP3BlockMGTransfer<3u, float>,
+  solver::BlockDiagonalPreconditioner<float>,
+  solver::MGCoarseGridTrilinosBlockWrapper<3u, float>>;
+using MGPrecSP3Float3 = solver::MultigridPreconditioner<
+  3u,
+  float,
+  solver::SP3Operator<3u, float>,
+  FloatBlockVector,
+  solver::SP3BlockMGTransfer<3u, float>,
+  solver::BlockDiagonalPreconditioner<float>,
+  solver::MGCoarseGridTrilinosBlockWrapper<3u, float>>;
+template void MGPrecSP3Float3::vmult<DoubleBlockVector>(DoubleBlockVector &dst, const DoubleBlockVector &src) const;
+template void MGPrecSP3Float3::Tvmult<DoubleBlockVector>(DoubleBlockVector &dst, const DoubleBlockVector &src) const;
