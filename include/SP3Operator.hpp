@@ -3,12 +3,18 @@
 #include "GeometryData.hpp"
 #include "CrossSectionManager.hpp"
 #include "MaterialData.hpp"
+#include "BlockDiagonalPreconditioner.hpp"
 
 #include <deal.II/base/aligned_vector.h>
 #include <deal.II/base/enable_observer_pointer.h>
 #include <deal.II/base/tensor.h>
 
+#include <deal.II/dofs/dof_handler.h>
+
 #include <deal.II/lac/la_parallel_block_vector.h>
+#include <deal.II/lac/la_parallel_vector.h>
+#include <deal.II/lac/trilinos_sparse_matrix.h>
+#include <deal.II/matrix_free/fe_evaluation.h>
 #include <deal.II/matrix_free/matrix_free.h>
 
 #include <vector>
@@ -20,12 +26,15 @@ namespace solver {
   template <unsigned int dim, typename number>
   class SP3Operator : public dealii::EnableObserverPointer {
   public:
+    using VectorType = dealii::LinearAlgebra::distributed::Vector<number>;
     using BlockVectorType = dealii::LinearAlgebra::distributed::BlockVector<number>;
+    using DiagonalPreconditionerType = BlockDiagonalPreconditioner<number>;
 
     SP3Operator(const unsigned int p_degree, const unsigned int dof_index, const data::GeometryData &geom_data) :
       p_degree(p_degree),
       dof_index(dof_index),
-      geometry_data(geom_data)
+      geometry_data(geom_data),
+      diagonal_is_up_to_date(false)
     {};
 
     void clear();
@@ -38,14 +47,28 @@ namespace solver {
   
     void vmult(BlockVectorType &, const BlockVectorType &) const;
     void Tvmult(BlockVectorType &, const BlockVectorType &) const;
+    void Tvmult_add(BlockVectorType &, const BlockVectorType &) const;
+
+    void compute_diagonal();
+    std::shared_ptr<DiagonalPreconditionerType> get_matrix_diagonal_inverse() const;
+    void compute_matrix(const dealii::DoFHandler<dim> &, dealii::TrilinosWrappers::SparseMatrix &) const;
 
 
   private:
     using TensorType = dealii::Tensor<1, 2, dealii::VectorizedArray<number>>;
+    using FEEval = dealii::FEEvaluation<dim, -1, 0, 1, number>;
+    using FEFaceEval = dealii::FEFaceEvaluation<dim, -1, 0, 1, number>;
+
     void apply_cell(const dealii::MatrixFree<dim, number> &, BlockVectorType &, const BlockVectorType &, const std::pair<unsigned int, unsigned int> &) const;
     void apply_face(const dealii::MatrixFree<dim, number> &, BlockVectorType &, const BlockVectorType &, const std::pair<unsigned int, unsigned int> &) const;
     void apply_face_T(const dealii::MatrixFree<dim, number> &, BlockVectorType &, const BlockVectorType &, const std::pair<unsigned int, unsigned int> &) const;
     void apply_boundary(const dealii::MatrixFree<dim, number> &, BlockVectorType &, const BlockVectorType &, const std::pair<unsigned int, unsigned int> &) const;
+
+    void integrate_cell_block(FEEval &, const unsigned int, const unsigned int) const;
+    void integrate_face_block(FEFaceEval &, FEFaceEval &, const unsigned int) const;
+    void integrate_boundary_block(FEFaceEval &, const unsigned int, const unsigned int) const;
+    void compute_scalar_diagonal(VectorType &, const unsigned int, const unsigned int) const;
+    void compute_scalar_matrix(dealii::TrilinosWrappers::SparseMatrix &, const unsigned int, const unsigned int) const;
   
     std::shared_ptr<const dealii::MatrixFree<dim, number>> data;
 
@@ -58,6 +81,8 @@ namespace solver {
     dealii::AlignedVector<dealii::VectorizedArray<number>> sigma_rem;
 
     std::shared_ptr<const MaterialCache<number>> material_cache;
+    std::shared_ptr<DiagonalPreconditionerType> inverse_diagonal;
+    bool diagonal_is_up_to_date;
   };
 
 

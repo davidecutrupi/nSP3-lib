@@ -2,10 +2,16 @@
 
 #include <deal.II/matrix_free/evaluation_flags.h>
 #include <deal.II/matrix_free/fe_evaluation.h>
+#include <deal.II/matrix_free/tools.h>
 
 #include <deal.II/base/exceptions.h>
 #include <deal.II/base/vectorization.h>
-#include <iostream>
+#include <deal.II/lac/affine_constraints.h>
+#include <deal.II/lac/trilinos_sparsity_pattern.h>
+
+#include <deal.II/multigrid/mg_tools.h>
+
+#include <limits>
 
 
 namespace solver {
@@ -14,6 +20,8 @@ namespace solver {
   template <unsigned int dim, typename number>
   void SP3Operator<dim, number>::clear() {
     data.reset();
+    inverse_diagonal.reset();
+    diagonal_is_up_to_date = false;
   }
   
   
@@ -22,6 +30,7 @@ namespace solver {
     clear();
     this->data = data;
     this->material_cache = material_cache;
+    diagonal_is_up_to_date = false;
 
     const unsigned int n_batches = data->n_cell_batches() + data->n_ghost_cell_batches();
     
@@ -365,6 +374,282 @@ namespace solver {
       phi0_inner.integrate_scatter(EvaluationFlags::values, dst.block(0));
       phi2_inner.integrate_scatter(EvaluationFlags::values, dst.block(1));
     }
+  }
+
+
+  template <unsigned int dim, typename number>
+  void SP3Operator<dim, number>::integrate_cell_block(FEEval &phi, const unsigned int dst_mode, const unsigned int src_mode) const {
+    const bool diagonal_block = (dst_mode == src_mode);
+    const EvaluationFlags::EvaluationFlags flags = diagonal_block ? (EvaluationFlags::values | EvaluationFlags::gradients) : EvaluationFlags::values;
+    phi.evaluate(flags);
+
+    const VectorizedArray<number> d = phi.read_cell_data(diff_coef);
+    const VectorizedArray<number> srem = phi.read_cell_data(sigma_rem);
+
+    for (const unsigned int q : phi.quadrature_point_indices()) {
+      if (dst_mode == 0 && src_mode == 0) {
+        phi.submit_gradient(phi.get_gradient(q) * d, q);
+        phi.submit_value(phi.get_value(q) * srem, q);
+      }
+      else if (dst_mode == 1 && src_mode == 1) {
+        const VectorizedArray<number> d22 = d * number(3.0 / 7.0);
+        const VectorizedArray<number> m22 = number(5.0 / 27.0) / d + srem * number(4.0 / 9.0);
+        phi.submit_gradient(phi.get_gradient(q) * d22, q);
+        phi.submit_value(phi.get_value(q) * m22, q);
+      }
+      else {
+        const VectorizedArray<number> m12 = srem * number(-2.0 / 3.0);
+        phi.submit_value(phi.get_value(q) * m12, q);
+      }
+    }
+
+    phi.integrate(flags);
+  }
+
+
+  template <unsigned int dim, typename number>
+  void SP3Operator<dim, number>::integrate_face_block(FEFaceEval &phi_inner, FEFaceEval &phi_outer, const unsigned int mode) const {
+    phi_inner.evaluate(EvaluationFlags::values | EvaluationFlags::gradients);
+    phi_outer.evaluate(EvaluationFlags::values | EvaluationFlags::gradients);
+
+    const VectorizedArray<number> half_d_in = phi_inner.read_cell_data(diff_coef) * number(0.5);
+    const VectorizedArray<number> half_d_out = phi_outer.read_cell_data(diff_coef) * number(0.5);
+    const VectorizedArray<number> mode_scale = (mode == 0) ? number(1.0) : number(3.0 / 7.0);
+
+    VectorizedArray<number> d_max = std::max(half_d_in, half_d_out) * number(2.0);
+
+    const VectorizedArray<number> inverse_length_normal_to_face = 0.5 * (
+      std::abs((phi_inner.normal_vector(0) * phi_inner.inverse_jacobian(0))[dim - 1]) +
+      std::abs((phi_outer.normal_vector(0) * phi_outer.inverse_jacobian(0))[dim - 1])
+    );
+
+    const VectorizedArray<number> sigma = d_max * get_penalty_factor() * inverse_length_normal_to_face * mode_scale;
+
+    const VectorizedArray<number> disc_fact_in = (mode == 0) ? material_cache->inner_face_disc_fact_interior[phi_inner.get_current_cell_index()] : VectorizedArray<number>(1.0);
+    const VectorizedArray<number> disc_fact_out = (mode == 0) ? material_cache->inner_face_disc_fact_exterior[phi_outer.get_current_cell_index()] : VectorizedArray<number>(1.0);
+
+    for (const unsigned int q : phi_inner.quadrature_point_indices()) {
+      const VectorizedArray<number> jump = disc_fact_in * phi_inner.get_value(q) - disc_fact_out * phi_outer.get_value(q);
+      const VectorizedArray<number> avg_normal_derivative = (half_d_in * phi_inner.get_normal_derivative(q) + half_d_out * phi_outer.get_normal_derivative(q)) * mode_scale;
+      const VectorizedArray<number> test_by_value = jump * sigma - avg_normal_derivative;
+
+      phi_inner.submit_value(test_by_value, q);
+      phi_outer.submit_value(-test_by_value, q);
+
+      phi_inner.submit_normal_derivative(-jump * half_d_in * mode_scale, q);
+      phi_outer.submit_normal_derivative(-jump * half_d_out * mode_scale, q);
+    }
+
+    phi_inner.integrate(EvaluationFlags::values | EvaluationFlags::gradients);
+    phi_outer.integrate(EvaluationFlags::values | EvaluationFlags::gradients);
+  }
+
+
+  template <unsigned int dim, typename number>
+  void SP3Operator<dim, number>::integrate_boundary_block(FEFaceEval &phi, const unsigned int dst_mode, const unsigned int src_mode) const {
+    phi.evaluate(EvaluationFlags::values);
+
+    const types::boundary_id boundary_id = phi.boundary_id();
+    data::GeometryData::BoundaryConditions bc = geometry_data.get_boundary_condition(boundary_id);
+    AssertThrow(bc.type != data::GeometryData::BoundaryConditions::BoundaryConditionType::Dirichlet, ExcMessage("Dirichlet boundary conditions are not implemented for SP3Operator."));
+
+    const VectorizedArray<number> albedo_factor = number((1.0 - bc.param) / (1.0 + bc.param));
+    VectorizedArray<number> coefficient;
+
+    if (dst_mode == 0 && src_mode == 0)
+      coefficient = number(1.0 / 2.0) * albedo_factor;
+    else if (dst_mode == 1 && src_mode == 1)
+      coefficient = number(7.0 / 24.0) * albedo_factor;
+    else
+      coefficient = number(-1.0 / 8.0) * albedo_factor;
+
+    for (const unsigned int q : phi.quadrature_point_indices())
+      phi.submit_value(phi.get_value(q) * coefficient, q);
+
+    phi.integrate(EvaluationFlags::values);
+  }
+
+
+  template <unsigned int dim, typename number>
+  void SP3Operator<dim, number>::compute_scalar_diagonal(VectorType &diagonal, const unsigned int dst_mode, const unsigned int src_mode) const {
+    data->initialize_dof_vector(diagonal, dof_index);
+    diagonal = 0.0;
+
+    using CellOperation = std::function<void(FEEval &)>;
+    using FaceOperation = std::function<void(FEFaceEval &, FEFaceEval &)>;
+    using BoundaryOperation = std::function<void(FEFaceEval &)>;
+
+    FaceOperation face_operation;
+    if (dst_mode == src_mode)
+      face_operation = [this, dst_mode](FEFaceEval &phi_inner, FEFaceEval &phi_outer) {
+        integrate_face_block(phi_inner, phi_outer, dst_mode);
+      };
+
+    MatrixFreeTools::compute_diagonal(
+      *data,
+      diagonal,
+      CellOperation([this, dst_mode, src_mode](FEEval &phi) { integrate_cell_block(phi, dst_mode, src_mode); }),
+      face_operation,
+      BoundaryOperation([this, dst_mode, src_mode](FEFaceEval &phi) { integrate_boundary_block(phi, dst_mode, src_mode); }),
+      dof_index,
+      dof_index,
+      0 /* first_selected_component */
+    );
+
+    diagonal.update_ghost_values();
+  }
+
+
+  template <unsigned int dim, typename number>
+  void SP3Operator<dim, number>::compute_scalar_matrix(TrilinosWrappers::SparseMatrix &matrix, const unsigned int dst_mode, const unsigned int src_mode) const {
+    AffineConstraints<number> dummy;
+    dummy.close();
+
+    using CellOperation = std::function<void(FEEval &)>;
+    using FaceOperation = std::function<void(FEFaceEval &, FEFaceEval &)>;
+    using BoundaryOperation = std::function<void(FEFaceEval &)>;
+
+    FaceOperation face_operation;
+    if (dst_mode == src_mode)
+      face_operation = [this, dst_mode](FEFaceEval &phi_inner, FEFaceEval &phi_outer) {
+        integrate_face_block(phi_inner, phi_outer, dst_mode);
+      };
+
+    MatrixFreeTools::compute_matrix(
+      *data,
+      dummy,
+      matrix,
+      CellOperation([this, dst_mode, src_mode](FEEval &phi) { integrate_cell_block(phi, dst_mode, src_mode); }),
+      face_operation,
+      BoundaryOperation([this, dst_mode, src_mode](FEFaceEval &phi) { integrate_boundary_block(phi, dst_mode, src_mode); }),
+      dof_index,
+      dof_index,
+      0 /* first_selected_component */
+    );
+  }
+
+
+  template <unsigned int dim, typename number>
+  void SP3Operator<dim, number>::compute_diagonal() {
+    if (diagonal_is_up_to_date)
+      return;
+
+    VectorType diag00;
+    VectorType diag02;
+    VectorType diag22;
+
+    compute_scalar_diagonal(diag00, 0, 0);
+    compute_scalar_diagonal(diag02, 0, 1);
+    compute_scalar_diagonal(diag22, 1, 1);
+
+    inverse_diagonal = std::make_shared<DiagonalPreconditionerType>();
+    inverse_diagonal->initialize(diag00, diag02, diag22);
+
+    // Flag diagonal as updated
+    diagonal_is_up_to_date = true;
+  }
+
+
+  template <unsigned int dim, typename number>
+  std::shared_ptr<typename SP3Operator<dim, number>::DiagonalPreconditionerType> SP3Operator<dim, number>::get_matrix_diagonal_inverse() const {
+    return inverse_diagonal;
+  }
+
+
+  template <unsigned int dim, typename number>
+  void SP3Operator<dim, number>::compute_matrix(const DoFHandler<dim> &dof_handler, TrilinosWrappers::SparseMatrix &matrix) const {
+    const IndexSet locally_owned_scalar_dofs = dof_handler.locally_owned_mg_dofs(0);
+    const types::global_dof_index scalar_size = dof_handler.n_dofs(0);
+
+    TrilinosWrappers::SparsityPattern flux_sparsity(locally_owned_scalar_dofs, MPI_COMM_WORLD);
+    MGTools::make_flux_sparsity_pattern(dof_handler, flux_sparsity, 0);
+    flux_sparsity.compress();
+
+    TrilinosWrappers::SparsityPattern cell_sparsity(locally_owned_scalar_dofs, MPI_COMM_WORLD);
+    MGTools::make_sparsity_pattern(dof_handler, cell_sparsity, 0);
+    cell_sparsity.compress();
+
+    IndexSet locally_owned_block_dofs(2 * scalar_size);
+    locally_owned_block_dofs.add_indices(locally_owned_scalar_dofs);
+    locally_owned_block_dofs.add_indices(locally_owned_scalar_dofs, scalar_size);
+    locally_owned_block_dofs.compress();
+
+    TrilinosWrappers::SparsityPattern block_sparsity(locally_owned_block_dofs, MPI_COMM_WORLD, flux_sparsity.max_entries_per_row() + cell_sparsity.max_entries_per_row());
+
+    const auto add_sparsity_block = [&](
+      const TrilinosWrappers::SparsityPattern &scalar_sparsity,
+      const types::global_dof_index row_offset,
+      const types::global_dof_index col_offset
+    ) {
+      std::vector<types::global_dof_index> cols;
+      
+      for (const auto row : locally_owned_scalar_dofs) {
+        cols.clear();
+        for (auto entry = scalar_sparsity.begin(row); entry != scalar_sparsity.end(row); ++entry)
+          cols.push_back(entry->column() + col_offset);
+        if (!cols.empty())
+          block_sparsity.add_entries(row + row_offset, cols.begin(), cols.end(), true);
+      }
+    };
+   
+    add_sparsity_block(flux_sparsity, 0, 0);
+    add_sparsity_block(flux_sparsity, scalar_size, scalar_size);
+    add_sparsity_block(cell_sparsity, 0, scalar_size);
+    add_sparsity_block(cell_sparsity, scalar_size, 0);
+    block_sparsity.compress();
+
+    matrix.reinit(block_sparsity);
+
+    const auto add_matrix_block = [&](
+      const TrilinosWrappers::SparseMatrix &block,
+      const types::global_dof_index row_offset,
+      const types::global_dof_index col_offset
+    ) {
+      std::vector<types::global_dof_index> cols;
+      std::vector<TrilinosScalar> vals;
+
+      for (const auto row : locally_owned_scalar_dofs) {
+        cols.clear();
+        vals.clear();
+
+        for (auto entry = block.begin(row); entry != block.end(row); ++entry) {
+          const auto value = entry->value();
+          if (value != 0.0) {
+            cols.push_back(entry->column() + col_offset);
+            vals.push_back(value);
+          }
+        }
+        if (!cols.empty())
+          matrix.add(row + row_offset, cols.size(), cols.data(), vals.data(), true, true);
+      }
+    };
+
+    {
+      TrilinosWrappers::SparseMatrix flux_block;
+      flux_block.reinit(flux_sparsity);
+
+      compute_scalar_matrix(flux_block, 0, 0);
+      flux_block.compress(VectorOperation::add);
+      add_matrix_block(flux_block, 0, 0);
+
+      flux_block = 0.0;
+
+      compute_scalar_matrix(flux_block, 1, 1);
+      flux_block.compress(VectorOperation::add);
+      add_matrix_block(flux_block, scalar_size, scalar_size);
+    }
+
+    {
+      TrilinosWrappers::SparseMatrix cell_block;
+      cell_block.reinit(cell_sparsity);
+  
+      compute_scalar_matrix(cell_block, 0, 1);
+      cell_block.compress(VectorOperation::add);
+      add_matrix_block(cell_block, 0, scalar_size);
+      add_matrix_block(cell_block, scalar_size, 0);
+    }
+
+    matrix.compress(VectorOperation::add);
   }
 
 }
