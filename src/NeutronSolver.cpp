@@ -5,14 +5,13 @@
 #include <deal.II/base/quadrature_lib.h>
 
 #include <deal.II/dofs/dof_tools.h>
-#include <deal.II/grid/grid_out.h>
 #include <deal.II/numerics/error_estimator.h>
 
 #include <deal.II/grid/cell_data.h>
 #include <deal.II/grid/grid_generator.h>
-#include <deal.II/grid/grid_refinement.h>
 #include <deal.II/grid/manifold_lib.h>
 #include <deal.II/grid/grid_tools_topology.h>
+#include <deal.II/distributed/grid_refinement.h>
 
 #include <cmath>
 #include <fstream>
@@ -486,7 +485,7 @@ namespace solver {
 
       // h-refinement set flags
       if (parameters.h_ref_type == "adaptive") {
-        GridRefinement::refine_and_coarsen_fixed_number(
+        parallel::distributed::GridRefinement::refine_and_coarsen_fixed_fraction(
           *triangulation,
           errors.h_refinement_estimators,
           0.3,
