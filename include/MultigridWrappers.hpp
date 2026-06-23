@@ -264,10 +264,9 @@ namespace solver {
     using BlockVectorType = dealii::LinearAlgebra::distributed::BlockVector<number>;
     using InitializeBlockVectorFunction = std::function<void(const unsigned int, BlockVectorType &)>;
 
-    void build(const dealii::DoFHandler<dim> &active_dof_handler,
-               const std::vector<std::shared_ptr<dealii::DoFHandler<dim>>> &level_dof_handlers,
-               const InitializeBlockVectorFunction &initialize_dof_vector) {
-      AssertThrow(!level_dof_handlers.empty(), dealii::ExcMessage("Global-coarsening block MG transfer requires at least one level DoFHandler."));
+    void build(const dealii::DoFHandler<dim> &active_dof_handler, const std::vector<std::shared_ptr<dealii::DoFHandler<dim>>> &level_dof_handlers, const InitializeBlockVectorFunction &initialize_dof_vector) {
+      AssertThrow(!level_dof_handlers.empty(), dealii::ExcMessage("No levels provided to global coarsening GMG transfer."));
+
       const unsigned int max_level = level_dof_handlers.size() - 1;
 
       auto initialize_scalar_vector = [initialize_dof_vector](const unsigned int level, VectorType &vector) {
