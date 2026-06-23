@@ -147,28 +147,67 @@ namespace solver {
 
 
   template <unsigned int dim>
-  void EnergyGroup<dim>::setup_global_coarsening_hierarchy() {
+  void EnergyGroup<dim>::setup_global_coarsening_hierarchy(const unsigned int coarse_size_multiplier) {
     TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::Setup::Multigrid::CoarseningHierarchy");
 
     mg_level_dof_handlers.clear();
     mg_level_fes.clear();
     mg_triangulations.clear();
 
-    mg_triangulations = MGTransferGlobalCoarseningTools::create_geometric_coarsening_sequence(*triangulation);
-    mg_level_dof_handlers.reserve(mg_triangulations.size());
-    mg_level_fes.reserve(mg_triangulations.size());
+    // Construct the triangulations hierarchy
+    const auto h_triangulations = MGTransferGlobalCoarseningTools::create_geometric_coarsening_sequence(*triangulation);
 
-    for (const auto &level_triangulation : mg_triangulations) {
-      mg_level_fes.push_back(std::make_shared<FE_DGQ<dim>>(p_degree)); // TODO can we remove it as attribute?
+    auto h_coarsest_fe = std::make_shared<FE_DGQ<dim>>(p_degree);
+    auto h_coarsest_dof_handler = std::make_shared<DoFHandler<dim>>(*h_triangulations.front());
+    h_coarsest_dof_handler->distribute_dofs(*h_coarsest_fe);
+
+    // Check whether to enable p-coarsening or not
+    const types::global_dof_index h_coarsest_monolithic_dofs = static_cast<types::global_dof_index>(coarse_size_multiplier) * h_coarsest_dof_handler->n_dofs();
+    const bool use_p_coarsening = h_coarsest_monolithic_dofs > parameters.coarse_p_coarsening_min_dofs && p_degree >= parameters.coarse_p_coarsening_min_degree;
+
+    // Create polynomial hierarchy
+    std::vector<unsigned int> p_level_degrees;
+    if (use_p_coarsening) {
+      p_level_degrees = MGTransferGlobalCoarseningTools::create_polynomial_coarsening_sequence(p_degree, parameters.coarse_p_coarsening_sequence);
+      if (p_level_degrees.size() <= 1)
+        p_level_degrees.clear();
+    }
+
+    mg_triangulations.reserve(h_triangulations.size() + p_level_degrees.size());
+    mg_level_dof_handlers.reserve(h_triangulations.size() + p_level_degrees.size());
+    mg_level_fes.reserve(h_triangulations.size() + p_level_degrees.size());
+
+    auto append_level = [this](const std::shared_ptr<const Triangulation<dim>> &level_triangulation, const unsigned int level_p_degree) {
+      mg_triangulations.push_back(level_triangulation);
+      mg_level_fes.push_back(std::make_shared<FE_DGQ<dim>>(level_p_degree));
       mg_level_dof_handlers.push_back(std::make_shared<DoFHandler<dim>>(*level_triangulation));
       mg_level_dof_handlers.back()->distribute_dofs(*mg_level_fes.back());
+    };
+
+    // Append all polynomial levels (h_level = 0 and p changes). This code adds the active level (finest h and actual p too)
+    unsigned int first_h_level = 0;
+    if (!p_level_degrees.empty()) {
+      for (const unsigned int level_p_degree : p_level_degrees) {
+        if (level_p_degree == p_degree) {
+          mg_triangulations.push_back(h_triangulations.front());
+          mg_level_fes.push_back(h_coarsest_fe);
+          mg_level_dof_handlers.push_back(h_coarsest_dof_handler);
+        }
+        else
+          append_level(h_triangulations.front(), level_p_degree);
+      }
+      first_h_level = 1;
+    }
+    else {
+      mg_triangulations.push_back(h_triangulations.front());
+      mg_level_fes.push_back(h_coarsest_fe);
+      mg_level_dof_handlers.push_back(h_coarsest_dof_handler);
+      first_h_level = 1;
     }
 
-    constexpr bool use_p_coarsening = false;
-    if constexpr (use_p_coarsening) {
-      AssertThrow(false, ExcNotImplemented());
-      // TODO append lower-degree FE_DGQ levels on the coarsest h-level and create polynomial two-level transfers here.
-    }
+    // Append all h levels, except for the finest (h_level grows from one and p fixed)
+    for (unsigned int h_level = first_h_level; h_level < h_triangulations.size(); ++h_level)
+      append_level(h_triangulations[h_level], p_degree);
   }
 
 
@@ -176,7 +215,7 @@ namespace solver {
   void EnergyGroup<dim>::setup_multigrid() {
     TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::Setup::Multigrid");
 
-    setup_global_coarsening_hierarchy();
+    setup_global_coarsening_hierarchy(1);
     const unsigned int nlevels = mg_level_dof_handlers.size();
     
     std::vector<std::shared_ptr<ZeroModeOperator<dim, float>>> level_zero_operators(nlevels);
@@ -208,10 +247,11 @@ namespace solver {
         mg_material_manager->update(*mg_mf_storage, level, group, material_data);
   
         // Create the level operator and add to level_operators
-        level_zero_operators[level] = std::make_shared<ZeroModeOperator<dim, float>>(p_degree, 0, group, geometry_data);
+        const unsigned int level_p_degree = mg_level_fes[level]->degree;
+        level_zero_operators[level] = std::make_shared<ZeroModeOperator<dim, float>>(level_p_degree, 0, group, geometry_data);
         level_zero_operators[level]->initialize(mg_mf_storage, mg_material_manager->get_cache(level), material_data);
   
-        level_second_operators[level] = std::make_shared<SecondModeOperator<dim, float>>(p_degree, 0, group, geometry_data);
+        level_second_operators[level] = std::make_shared<SecondModeOperator<dim, float>>(level_p_degree, 0, group, geometry_data);
         level_second_operators[level]->initialize(mg_mf_storage, mg_material_manager->get_cache(level), material_data);
       }
     }
@@ -221,8 +261,10 @@ namespace solver {
       level_zero_operators[level]->initialize_dof_vector(vector);
     });
 
-    inner_preconditioner_zero->initialize(dof_handler, level_zero_operators, mg_level_dof_handlers, mg_transfer);
-    inner_preconditioner_second->initialize(dof_handler, level_second_operators, mg_level_dof_handlers, mg_transfer);
+    const CoarseSolverPolicy coarse_solver_policy{parameters.coarse_direct_klu_max_dofs};
+
+    inner_preconditioner_zero->initialize(dof_handler, level_zero_operators, mg_level_dof_handlers, mg_transfer, coarse_solver_policy);
+    inner_preconditioner_second->initialize(dof_handler, level_second_operators, mg_level_dof_handlers, mg_transfer, coarse_solver_policy);
   }
 
 
@@ -230,7 +272,7 @@ namespace solver {
   void EnergyGroup<dim>::setup_coupled_multigrid() {
     TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::Setup::Multigrid");
 
-    setup_global_coarsening_hierarchy();
+    setup_global_coarsening_hierarchy(2);
     const unsigned int nlevels = mg_level_dof_handlers.size();
     
     std::vector<std::shared_ptr<SP3Operator<dim, float>>> level_sp3_operators(nlevels);
@@ -261,7 +303,8 @@ namespace solver {
         mg_material_manager->update(*mg_mf_storage, level, group, material_data);
   
         // Create the SP3 level operator and add to level_operators
-        level_sp3_operators[level] = std::make_shared<SP3Operator<dim, float>>(p_degree, 0, group, geometry_data);
+        const unsigned int level_p_degree = mg_level_fes[level]->degree;
+        level_sp3_operators[level] = std::make_shared<SP3Operator<dim, float>>(level_p_degree, 0, group, geometry_data);
         level_sp3_operators[level]->initialize(mg_mf_storage, mg_material_manager->get_cache(level), material_data);
       }
     }
@@ -271,8 +314,10 @@ namespace solver {
       level_sp3_operators[level]->initialize_dof_vector(vector);
     });
 
+    const CoarseSolverPolicy coarse_solver_policy{parameters.coarse_direct_klu_max_dofs};
+
     coupled_mg_preconditioner = std::make_shared<CoupledMGPreconditioner>();
-    coupled_mg_preconditioner->initialize(dof_handler, level_sp3_operators, mg_level_dof_handlers, mg_transfer);
+    coupled_mg_preconditioner->initialize(dof_handler, level_sp3_operators, mg_level_dof_handlers, mg_transfer, coarse_solver_policy);
   }
 
 

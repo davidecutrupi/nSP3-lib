@@ -16,3 +16,10 @@ subsection Group solver
   set Max iterations = 1000
   set Tolerance = 1e-8
 end
+
+subsection Multigrid
+  set Coarse direct KLU max dofs = 10000
+  set Coarse p-coarsening min dofs = 75000
+  set Coarse p-coarsening min degree = 3
+  set Coarse p-coarsening sequence = bisect
+end

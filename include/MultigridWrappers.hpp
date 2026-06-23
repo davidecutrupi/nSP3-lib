@@ -26,10 +26,24 @@
 #include <array>
 #include <vector>
 #include <memory>
+#include <string>
 #include <type_traits>
 
 
 namespace solver {
+
+  struct CoarseSolverPolicy {
+    explicit CoarseSolverPolicy(const dealii::types::global_dof_index klu_max_dofs = 10000)
+      : klu_max_dofs(klu_max_dofs)
+    {}
+
+    dealii::types::global_dof_index klu_max_dofs;
+
+    std::string direct_solver_type(const dealii::types::global_dof_index matrix_size) const {
+      return matrix_size < klu_max_dofs ? "Amesos_Klu" : "Amesos_Mumps";
+    }
+  };
+
 
   template <typename VectorType, typename OperatorType>
   class LevelMatrixWrapper : public dealii::MGMatrixBase<VectorType> {
@@ -66,14 +80,22 @@ namespace solver {
   public:
     MGCoarseGridTrilinosWrapper() = default;
 
-    void initialize(const dealii::TrilinosWrappers::SparseMatrix &coarse_matrix) {
+    void initialize(const dealii::TrilinosWrappers::SparseMatrix &coarse_matrix, const CoarseSolverPolicy &policy) {
       dealii::TrilinosWrappers::SolverDirect::AdditionalData data;
-      data.solver_type = "Amesos_Klu"; 
+      data.solver_type = policy.direct_solver_type(coarse_matrix.m());
       direct_solver.initialize(coarse_matrix, data);
     }
 
-    void initialize(const dealii::TrilinosWrappers::SparseMatrix &coarse_matrix, const dealii::DoFHandler<dim> &) {
-      initialize(coarse_matrix);
+    void initialize(const dealii::TrilinosWrappers::SparseMatrix &coarse_matrix) {
+      initialize(coarse_matrix, CoarseSolverPolicy());
+    }
+
+    void initialize(const dealii::TrilinosWrappers::SparseMatrix &coarse_matrix, const dealii::DoFHandler<dim> &, const CoarseSolverPolicy &policy) {
+      initialize(coarse_matrix, policy);
+    }
+
+    void initialize(const dealii::TrilinosWrappers::SparseMatrix &coarse_matrix, const dealii::DoFHandler<dim> &dof_handler) {
+      initialize(coarse_matrix, dof_handler, CoarseSolverPolicy());
     }
 
     virtual void operator()(const unsigned int level, VectorType &dst, const VectorType &src) const override {
@@ -101,7 +123,7 @@ namespace solver {
   public:
     using BlockVectorType = dealii::LinearAlgebra::distributed::BlockVector<number>;
 
-    void initialize(const dealii::TrilinosWrappers::SparseMatrix &coarse_matrix, const dealii::DoFHandler<dim> &dof_handler) {
+    void initialize(const dealii::TrilinosWrappers::SparseMatrix &coarse_matrix, const dealii::DoFHandler<dim> &dof_handler, const CoarseSolverPolicy &policy) {
       scalar_size = dof_handler.n_dofs();
       const dealii::IndexSet scalar_owned = dof_handler.locally_owned_dofs();
 
@@ -116,8 +138,12 @@ namespace solver {
       temp_dst_double.reinit(monolithic_owned, MPI_COMM_WORLD);
 
       dealii::TrilinosWrappers::SolverDirect::AdditionalData data;
-      data.solver_type = "Amesos_Mumps";
+      data.solver_type = policy.direct_solver_type(coarse_matrix.m());
       direct_solver.initialize(coarse_matrix, data);
+    }
+
+    void initialize(const dealii::TrilinosWrappers::SparseMatrix &coarse_matrix, const dealii::DoFHandler<dim> &dof_handler) {
+      initialize(coarse_matrix, dof_handler, CoarseSolverPolicy());
     }
 
     void operator()(const unsigned int level, BlockVectorType &dst, const BlockVectorType &src) const override {
@@ -192,7 +218,7 @@ namespace solver {
       two_level_transfers.resize(0, max_level);
 
       for (unsigned int level = 1; level <= max_level; ++level)
-        two_level_transfers[level].reinit_geometric_transfer(*level_dof_handlers[level], *level_dof_handlers[level - 1]);
+        two_level_transfers[level].reinit(*level_dof_handlers[level], *level_dof_handlers[level - 1]);
       
       transfer.initialize_two_level_transfers(two_level_transfers);
       transfer.build(active_dof_handler, initialize_dof_vector);

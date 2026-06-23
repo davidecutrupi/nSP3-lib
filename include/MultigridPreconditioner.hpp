@@ -33,7 +33,7 @@ namespace solver {
     MultigridPreconditioner() = default;
 
     void clear();
-    void initialize(const dealii::DoFHandler<dim> &, const std::vector<std::shared_ptr<OperatorType>> &, const std::vector<std::shared_ptr<dealii::DoFHandler<dim>>> &, std::shared_ptr<TransferType>);
+    void initialize(const dealii::DoFHandler<dim> &, const std::vector<std::shared_ptr<OperatorType>> &, const std::vector<std::shared_ptr<dealii::DoFHandler<dim>>> &, std::shared_ptr<TransferType>, const CoarseSolverPolicy & = CoarseSolverPolicy());
     template <typename OtherVectorType> void vmult(OtherVectorType &, const OtherVectorType &) const;
     template <typename OtherVectorType> void Tvmult(OtherVectorType &, const OtherVectorType &) const;
 

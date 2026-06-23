@@ -45,7 +45,7 @@ namespace solver {
     typename TransferType,
     typename SmootherPreconditionerType,
     typename CoarseWrapperType>
-  void MultigridPreconditioner<dim, number, OperatorType, VectorType, TransferType, SmootherPreconditionerType, CoarseWrapperType>::initialize(const DoFHandler<dim> &dof_handler, const std::vector<std::shared_ptr<OperatorType>> &level_operators, const std::vector<std::shared_ptr<DoFHandler<dim>>> &level_dof_handlers, std::shared_ptr<TransferType> mg_transfer) {
+  void MultigridPreconditioner<dim, number, OperatorType, VectorType, TransferType, SmootherPreconditionerType, CoarseWrapperType>::initialize(const DoFHandler<dim> &dof_handler, const std::vector<std::shared_ptr<OperatorType>> &level_operators, const std::vector<std::shared_ptr<DoFHandler<dim>>> &level_dof_handlers, std::shared_ptr<TransferType> mg_transfer, const CoarseSolverPolicy &coarse_solver_policy) {
     clear();
 
     this->transfer = mg_transfer;
@@ -87,7 +87,7 @@ namespace solver {
     {
       TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::Setup::Multigrid::DirectSolver");
       mg_coarse_wrapper = std::make_unique<CoarseWrapperType>();
-      mg_coarse_wrapper->initialize(*coarse_matrix, *this->level_dof_handlers[0]);
+      mg_coarse_wrapper->initialize(*coarse_matrix, *this->level_dof_handlers[0], coarse_solver_policy);
     }
 
     // In the end setup multigrid and precondtioner

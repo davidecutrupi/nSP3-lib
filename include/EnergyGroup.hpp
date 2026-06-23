@@ -93,7 +93,7 @@ namespace solver {
   private:
     void setup_multigrid();
     void setup_coupled_multigrid();
-    void setup_global_coarsening_hierarchy();
+    void setup_global_coarsening_hierarchy(unsigned int);
     void setup_coefficients(std::shared_ptr<const dealii::MatrixFree<dim, double>>);
     void setup_feevals();
 
