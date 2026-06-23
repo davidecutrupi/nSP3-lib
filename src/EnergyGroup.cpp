@@ -103,9 +103,7 @@ namespace solver {
       coupling_operator = std::make_shared<CouplingOperator<dim, double>>(group, group, geometry_data);
       coupling_operator->initialize(system_mf_storage, material_manager->get_cache(0), material_data);
     
-      // Setup inner preconditioners
-      inner_preconditioner_zero = std::make_shared<InnerPreconditionerZero>();
-      inner_preconditioner_second = std::make_shared<InnerPrecontionerSecond>();
+      // Setup uncoupled multigrid
       setup_multigrid();
 
       // Setup inner solvers
@@ -263,6 +261,8 @@ namespace solver {
 
     const CoarseSolverPolicy coarse_solver_policy{parameters.coarse_direct_klu_max_dofs};
 
+    inner_preconditioner_zero = std::make_shared<InnerPreconditionerZero>();
+    inner_preconditioner_second = std::make_shared<InnerPrecontionerSecond>();
     inner_preconditioner_zero->initialize(dof_handler, level_zero_operators, mg_level_dof_handlers, mg_transfer, coarse_solver_policy);
     inner_preconditioner_second->initialize(dof_handler, level_second_operators, mg_level_dof_handlers, mg_transfer, coarse_solver_policy);
   }
