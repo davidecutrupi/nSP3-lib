@@ -41,7 +41,6 @@ namespace solver {
 
   private:
     void apply_cell(const dealii::MatrixFree<dim, number> &, VectorType &, const VectorType &, const std::pair<unsigned int, unsigned int> &) const;
-    void apply_face(const dealii::MatrixFree<dim, number> &, VectorType &, const VectorType &, const std::pair<unsigned int, unsigned int> &) const;
     void apply_boundary(const dealii::MatrixFree<dim, number> &, VectorType &, const VectorType &, const std::pair<unsigned int, unsigned int> &) const;
   
     using FEEval = dealii::FEEvaluation<dim, -1, 0, 1, number>;

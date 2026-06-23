@@ -68,16 +68,18 @@ namespace solver {
 
   template <unsigned int dim, typename number>
   void CouplingOperator<dim, number>::vmult(VectorType &dst, const VectorType &src) const {
+    void (CouplingOperator<dim, number>::*face_operation)(const MatrixFree<dim, number> &, VectorType &, const VectorType &, const std::pair<unsigned int, unsigned int> &) const = nullptr;
+
     data->loop(
       &CouplingOperator::apply_cell,
-      &CouplingOperator::apply_face,
+      face_operation,
       &CouplingOperator::apply_boundary,
       this,
       dst,
       src,
       true, // Set dst to zero
-      MatrixFree<dim, number>::DataAccessOnFaces::values,
-      MatrixFree<dim, number>::DataAccessOnFaces::values
+      MatrixFree<dim, number>::DataAccessOnFaces::none,
+      MatrixFree<dim, number>::DataAccessOnFaces::none
     );
   }
 
@@ -105,13 +107,6 @@ namespace solver {
       phi_dst.integrate_scatter(EvaluationFlags::values, dst);
     }
   }
-
-
-  template <unsigned int dim, typename number>
-  void CouplingOperator<dim, number>::apply_face(const MatrixFree<dim, number> &, VectorType &, const VectorType &, const std::pair<unsigned int, unsigned int> &) const {
-    // No face contributions
-  }
-
 
   template <unsigned int dim, typename number>
   void CouplingOperator<dim, number>::apply_boundary(const MatrixFree<dim, number> &data, VectorType &dst, const VectorType &src, const std::pair<unsigned int, unsigned int> &face_range) const {
