@@ -93,6 +93,7 @@ namespace solver {
   private:
     void setup_multigrid();
     void setup_coupled_multigrid();
+    void setup_global_coarsening_hierarchy();
     void setup_coefficients(std::shared_ptr<const dealii::MatrixFree<dim, double>>);
     void setup_feevals();
 
@@ -142,7 +143,7 @@ namespace solver {
       float,
       SP3Operator<dim, float>,
       BlockVectorType<float>,
-      SP3BlockMGTransfer<dim, float>,
+      MGTransferBlockGlobalCoarsening<dim, float>,
       BlockDiagonalPreconditioner<float>,
       MGCoarseGridTrilinosBlockWrapper<dim, float>>;
     
@@ -159,6 +160,11 @@ namespace solver {
     // Coefficients managers
     std::shared_ptr<CrossSectionManager<dim, double>> material_manager;
     std::shared_ptr<CrossSectionManager<dim, float>> mg_material_manager;
+
+    // MG levels
+    std::vector<std::shared_ptr<const dealii::Triangulation<dim>>> mg_triangulations;
+    std::vector<std::shared_ptr<dealii::FE_DGQ<dim>>> mg_level_fes;
+    std::vector<std::shared_ptr<dealii::DoFHandler<dim>>> mg_level_dof_handlers;
   
     // FEEvaluation (to compute rhs)
     std::unique_ptr<dealii::FEEvaluation<dim, -1, 0, 1, double>> phi0;

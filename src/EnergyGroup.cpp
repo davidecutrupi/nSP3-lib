@@ -19,6 +19,7 @@
 #include <deal.II/base/index_set.h>
 
 #include <deal.II/multigrid/multigrid.h>
+#include <deal.II/multigrid/mg_transfer_global_coarsening.h>
 #include <deal.II/multigrid/mg_transfer_matrix_free.h>
 #include <deal.II/multigrid/mg_matrix.h>
 #include <deal.II/multigrid/mg_coarse.h>
@@ -146,14 +147,40 @@ namespace solver {
 
 
   template <unsigned int dim>
+  void EnergyGroup<dim>::setup_global_coarsening_hierarchy() {
+    TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::Setup::Multigrid::CoarseningHierarchy");
+
+    mg_level_dof_handlers.clear();
+    mg_level_fes.clear();
+    mg_triangulations.clear();
+
+    mg_triangulations = MGTransferGlobalCoarseningTools::create_geometric_coarsening_sequence(*triangulation);
+    mg_level_dof_handlers.reserve(mg_triangulations.size());
+    mg_level_fes.reserve(mg_triangulations.size());
+
+    for (const auto &level_triangulation : mg_triangulations) {
+      mg_level_fes.push_back(std::make_shared<FE_DGQ<dim>>(p_degree)); // TODO can we remove it as attribute?
+      mg_level_dof_handlers.push_back(std::make_shared<DoFHandler<dim>>(*level_triangulation));
+      mg_level_dof_handlers.back()->distribute_dofs(*mg_level_fes.back());
+    }
+
+    constexpr bool use_p_coarsening = false;
+    if constexpr (use_p_coarsening) {
+      AssertThrow(false, ExcNotImplemented());
+      // TODO append lower-degree FE_DGQ levels on the coarsest h-level and create polynomial two-level transfers here.
+    }
+  }
+
+
+  template <unsigned int dim>
   void EnergyGroup<dim>::setup_multigrid() {
     TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::Setup::Multigrid");
 
-    const unsigned int nlevels = triangulation->n_global_levels();
+    setup_global_coarsening_hierarchy();
+    const unsigned int nlevels = mg_level_dof_handlers.size();
     
     std::vector<std::shared_ptr<ZeroModeOperator<dim, float>>> level_zero_operators(nlevels);
     std::vector<std::shared_ptr<SecondModeOperator<dim, float>>> level_second_operators(nlevels);
-    std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> partitioners(nlevels);
 
     AffineConstraints<float> dummy;
     dummy.close();
@@ -162,38 +189,40 @@ namespace solver {
     mg_material_manager = std::make_shared<CrossSectionManager<dim, float>>();
     mg_material_manager->setup_levels(nlevels, material_data.get_n_groups());
 
-    for (unsigned int level = 0; level < nlevels; ++level) {
-      typename MatrixFree<dim, float>::AdditionalData additional_data;
-      additional_data.tasks_parallel_scheme = MatrixFree<dim, float>::AdditionalData::none;
-      additional_data.mapping_update_flags = (update_values | update_gradients | update_JxW_values);
-      additional_data.mapping_update_flags_inner_faces = (update_values | update_gradients | update_JxW_values | update_normal_vectors | update_inverse_jacobians);
-      additional_data.mapping_update_flags_boundary_faces = (update_values | update_JxW_values);
-      additional_data.mg_level = level;
-
-      // TODO conviene fare un vector di storages che contiene gli storage di ogni livello della triangulation 
-      // (ognuno con una lista di dof hanlder di ogni gruppo) direttamente nella classe NeutronSolver?
-      // Cioè conviene fare come per lo storage di livello? 
-      const auto mg_mf_storage = std::make_shared<MatrixFree<dim, float>>(); 
-      mg_mf_storage->reinit(mapping, dof_handler, dummy, QGauss<1>(fe->degree + 1), additional_data);
-      
-      // Populate coefficients
-      mg_material_manager->update(*mg_mf_storage, level, group, material_data);
-
-      // Create the level operator and add to level_operators
-      level_zero_operators[level] = std::make_shared<ZeroModeOperator<dim, float>>(p_degree, 0, group, geometry_data);
-      level_zero_operators[level]->initialize(mg_mf_storage, mg_material_manager->get_cache(level), material_data);
-
-      level_second_operators[level] = std::make_shared<SecondModeOperator<dim, float>>(p_degree, 0, group, geometry_data);
-      level_second_operators[level]->initialize(mg_mf_storage, mg_material_manager->get_cache(level), material_data);
-
-      partitioners[level] = mg_mf_storage->get_vector_partitioner();
+    {
+      TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::Setup::Multigrid::LevelOperators");
+      for (unsigned int level = 0; level < nlevels; ++level) {
+        typename MatrixFree<dim, float>::AdditionalData additional_data;
+        additional_data.tasks_parallel_scheme = MatrixFree<dim, float>::AdditionalData::none;
+        additional_data.mapping_update_flags = (update_values | update_gradients | update_JxW_values);
+        additional_data.mapping_update_flags_inner_faces = (update_values | update_gradients | update_JxW_values | update_normal_vectors | update_inverse_jacobians);
+        additional_data.mapping_update_flags_boundary_faces = (update_values | update_JxW_values);
+  
+        // TODO conviene fare un vector di storages che contiene gli storage di ogni livello della triangulation 
+        // (ognuno con una lista di dof hanlder di ogni gruppo) direttamente nella classe NeutronSolver?
+        // Cioè conviene fare come per lo storage di livello? 
+        const auto mg_mf_storage = std::make_shared<MatrixFree<dim, float>>(); 
+        mg_mf_storage->reinit(mapping, *mg_level_dof_handlers[level], dummy, QGauss<1>(mg_level_fes[level]->degree + 1), additional_data);
+        
+        // Populate coefficients
+        mg_material_manager->update(*mg_mf_storage, level, group, material_data);
+  
+        // Create the level operator and add to level_operators
+        level_zero_operators[level] = std::make_shared<ZeroModeOperator<dim, float>>(p_degree, 0, group, geometry_data);
+        level_zero_operators[level]->initialize(mg_mf_storage, mg_material_manager->get_cache(level), material_data);
+  
+        level_second_operators[level] = std::make_shared<SecondModeOperator<dim, float>>(p_degree, 0, group, geometry_data);
+        level_second_operators[level]->initialize(mg_mf_storage, mg_material_manager->get_cache(level), material_data);
+      }
     }
 
-    std::shared_ptr<MGTransferMatrixFree<dim, float>> mg_transfer = std::make_shared<MGTransferMatrixFree<dim, float>>();
-    mg_transfer->build(dof_handler, partitioners);
+    auto mg_transfer = std::make_shared<MGTransferGlobalCoarsening<dim, float>>();
+    mg_transfer->build(dof_handler, mg_level_dof_handlers, [level_zero_operators](const unsigned int level, VectorType<float> &vector) {
+      level_zero_operators[level]->initialize_dof_vector(vector);
+    });
 
-    inner_preconditioner_zero->initialize(dof_handler, level_zero_operators, mg_transfer);
-    inner_preconditioner_second->initialize(dof_handler, level_second_operators, mg_transfer);
+    inner_preconditioner_zero->initialize(dof_handler, level_zero_operators, mg_level_dof_handlers, mg_transfer);
+    inner_preconditioner_second->initialize(dof_handler, level_second_operators, mg_level_dof_handlers, mg_transfer);
   }
 
 
@@ -201,10 +230,10 @@ namespace solver {
   void EnergyGroup<dim>::setup_coupled_multigrid() {
     TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::Setup::Multigrid");
 
-    const unsigned int nlevels = triangulation->n_global_levels();
+    setup_global_coarsening_hierarchy();
+    const unsigned int nlevels = mg_level_dof_handlers.size();
     
     std::vector<std::shared_ptr<SP3Operator<dim, float>>> level_sp3_operators(nlevels);
-    std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> partitioners(nlevels);
 
     AffineConstraints<float> dummy;
     dummy.close();
@@ -213,35 +242,37 @@ namespace solver {
     mg_material_manager = std::make_shared<CrossSectionManager<dim, float>>();
     mg_material_manager->setup_levels(nlevels, material_data.get_n_groups());
 
-    for (unsigned int level = 0; level < nlevels; ++level) {
-      typename MatrixFree<dim, float>::AdditionalData additional_data;
-      additional_data.tasks_parallel_scheme = MatrixFree<dim, float>::AdditionalData::none;
-      additional_data.mapping_update_flags = (update_values | update_gradients | update_JxW_values);
-      additional_data.mapping_update_flags_inner_faces = (update_values | update_gradients | update_JxW_values | update_normal_vectors | update_inverse_jacobians);
-      additional_data.mapping_update_flags_boundary_faces = (update_values | update_JxW_values);
-      additional_data.mg_level = level;
-
-      // TODO conviene fare un vector di storages che contiene gli storage di ogni livello della triangulation 
-      // (ognuno con una lista di dof hanlder di ogni gruppo) direttamente nella classe NeutronSolver?
-      // Cioè conviene fare come per lo storage di livello? 
-      const auto mg_mf_storage = std::make_shared<MatrixFree<dim, float>>(); 
-      mg_mf_storage->reinit(mapping, dof_handler, dummy, QGauss<1>(fe->degree + 1), additional_data);
-      
-      // Populate coefficients
-      mg_material_manager->update(*mg_mf_storage, level, group, material_data);
-
-      // Create the SP3 level operator and add to level_operators
-      level_sp3_operators[level] = std::make_shared<SP3Operator<dim, float>>(p_degree, 0, group, geometry_data);
-      level_sp3_operators[level]->initialize(mg_mf_storage, mg_material_manager->get_cache(level), material_data);
-
-      partitioners[level] = mg_mf_storage->get_vector_partitioner();
+    {
+      TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::Setup::Multigrid::LevelOperators");
+      for (unsigned int level = 0; level < nlevels; ++level) {
+        typename MatrixFree<dim, float>::AdditionalData additional_data;
+        additional_data.tasks_parallel_scheme = MatrixFree<dim, float>::AdditionalData::none;
+        additional_data.mapping_update_flags = (update_values | update_gradients | update_JxW_values);
+        additional_data.mapping_update_flags_inner_faces = (update_values | update_gradients | update_JxW_values | update_normal_vectors | update_inverse_jacobians);
+        additional_data.mapping_update_flags_boundary_faces = (update_values | update_JxW_values);
+  
+        // TODO conviene fare un vector di storages che contiene gli storage di ogni livello della triangulation 
+        // (ognuno con una lista di dof hanlder di ogni gruppo) direttamente nella classe NeutronSolver?
+        // Cioè conviene fare come per lo storage di livello? 
+        const auto mg_mf_storage = std::make_shared<MatrixFree<dim, float>>(); 
+        mg_mf_storage->reinit(mapping, *mg_level_dof_handlers[level], dummy, QGauss<1>(mg_level_fes[level]->degree + 1), additional_data);
+        
+        // Populate coefficients
+        mg_material_manager->update(*mg_mf_storage, level, group, material_data);
+  
+        // Create the SP3 level operator and add to level_operators
+        level_sp3_operators[level] = std::make_shared<SP3Operator<dim, float>>(p_degree, 0, group, geometry_data);
+        level_sp3_operators[level]->initialize(mg_mf_storage, mg_material_manager->get_cache(level), material_data);
+      }
     }
 
-    std::shared_ptr<SP3BlockMGTransfer<dim, float>> mg_transfer = std::make_shared<SP3BlockMGTransfer<dim, float>>();
-    mg_transfer->build(dof_handler, partitioners);
+    auto mg_transfer = std::make_shared<MGTransferBlockGlobalCoarsening<dim, float>>();
+    mg_transfer->build(dof_handler, mg_level_dof_handlers, [level_sp3_operators](const unsigned int level, BlockVectorType<float> &vector) {
+      level_sp3_operators[level]->initialize_dof_vector(vector);
+    });
 
     coupled_mg_preconditioner = std::make_shared<CoupledMGPreconditioner>();
-    coupled_mg_preconditioner->initialize(dof_handler, level_sp3_operators, mg_transfer);
+    coupled_mg_preconditioner->initialize(dof_handler, level_sp3_operators, mg_level_dof_handlers, mg_transfer);
   }
 
 

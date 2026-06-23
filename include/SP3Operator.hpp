@@ -54,6 +54,7 @@ namespace solver {
     void compute_diagonal();
     std::shared_ptr<DiagonalPreconditionerType> get_matrix_diagonal_inverse() const;
     void compute_matrix(const dealii::DoFHandler<dim> &, dealii::TrilinosWrappers::SparseMatrix &) const;
+    void compute_matrix_on_active_dofs(const dealii::DoFHandler<dim> &, dealii::TrilinosWrappers::SparseMatrix &) const;
 
 
   private:

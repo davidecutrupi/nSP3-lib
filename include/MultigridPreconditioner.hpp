@@ -23,7 +23,7 @@ namespace solver {
     typename number,
     typename OperatorType,
     typename VectorType = dealii::LinearAlgebra::distributed::Vector<number>,
-    typename TransferType = dealii::MGTransferMatrixFree<dim, number>,
+    typename TransferType = MGTransferGlobalCoarsening<dim, number>,
     typename SmootherPreconditionerType = dealii::DiagonalMatrix<VectorType>,
     typename CoarseWrapperType = MGCoarseGridTrilinosWrapper<dim, VectorType>>
   class MultigridPreconditioner {
@@ -33,13 +33,14 @@ namespace solver {
     MultigridPreconditioner() = default;
 
     void clear();
-    void initialize(const dealii::DoFHandler<dim> &, const std::vector<std::shared_ptr<OperatorType>> &, std::shared_ptr<TransferType>);
+    void initialize(const dealii::DoFHandler<dim> &, const std::vector<std::shared_ptr<OperatorType>> &, const std::vector<std::shared_ptr<dealii::DoFHandler<dim>>> &, std::shared_ptr<TransferType>);
     template <typename OtherVectorType> void vmult(OtherVectorType &, const OtherVectorType &) const;
     template <typename OtherVectorType> void Tvmult(OtherVectorType &, const OtherVectorType &) const;
 
 
   private:
     std::shared_ptr<TransferType> transfer;
+    std::vector<std::shared_ptr<dealii::DoFHandler<dim>>> level_dof_handlers;
   
     std::unique_ptr<LevelMatrixWrapper<VectorType, OperatorType>> mg_matrix_wrapper;
     

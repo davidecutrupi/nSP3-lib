@@ -1,5 +1,8 @@
 #include "MultigridPreconditioner.hpp"
+#include "GlobalTimer.hpp"
 
+#include <deal.II/base/exceptions.h>
+#include <deal.II/base/timer.h>
 #include <deal.II/base/types.h>
 #include <deal.II/base/index_set.h>
 
@@ -29,6 +32,7 @@ namespace solver {
 
     mg_matrix_wrapper.reset();
 
+    level_dof_handlers.clear();
     transfer.reset();
   }
 
@@ -41,37 +45,50 @@ namespace solver {
     typename TransferType,
     typename SmootherPreconditionerType,
     typename CoarseWrapperType>
-  void MultigridPreconditioner<dim, number, OperatorType, VectorType, TransferType, SmootherPreconditionerType, CoarseWrapperType>::initialize(const DoFHandler<dim> &dof_handler, const std::vector<std::shared_ptr<OperatorType>> &level_operators, std::shared_ptr<TransferType> mg_transfer) {
+  void MultigridPreconditioner<dim, number, OperatorType, VectorType, TransferType, SmootherPreconditionerType, CoarseWrapperType>::initialize(const DoFHandler<dim> &dof_handler, const std::vector<std::shared_ptr<OperatorType>> &level_operators, const std::vector<std::shared_ptr<DoFHandler<dim>>> &level_dof_handlers, std::shared_ptr<TransferType> mg_transfer) {
     clear();
 
     this->transfer = mg_transfer;
+    this->level_dof_handlers = level_dof_handlers;
+
     const unsigned int nlevels = level_operators.size();
 
     mg_matrix_wrapper = std::make_unique<LevelMatrixWrapper<VectorType, OperatorType>>(level_operators);
     level_smoothers = std::make_unique<MGLevelObject<SmootherType>>(0, nlevels - 1);
 
     // Setup smoother data
-    for (unsigned int level = 1; level < nlevels; ++level) {
-      typename SmootherType::AdditionalData smoother_data;
-      smoother_data.smoothing_range = 15.;
-      smoother_data.degree = 5;
-      smoother_data.eig_cg_n_iterations = 10;
-    
-      level_operators[level]->compute_diagonal();
-      smoother_data.preconditioner = level_operators[level]->get_matrix_diagonal_inverse();
-
-      (*level_smoothers)[level].initialize(*level_operators[level], smoother_data);
+    {
+      TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::Setup::Multigrid::Smoother");
+      for (unsigned int level = 1; level < nlevels; ++level) {
+        typename SmootherType::AdditionalData smoother_data;
+        smoother_data.smoothing_range = 15.;
+        smoother_data.degree = 5;
+        smoother_data.eig_cg_n_iterations = 10;
+      
+        level_operators[level]->compute_diagonal();
+        smoother_data.preconditioner = level_operators[level]->get_matrix_diagonal_inverse();
+  
+        (*level_smoothers)[level].initialize(*level_operators[level], smoother_data);
+      }
     }
 
     // Initialize mg_smoother
     mg_smoother_wrapper = std::make_unique<LevelSmootherWrapper<VectorType, SmootherType>>();
     mg_smoother_wrapper->initialize(level_smoothers.get());
     
-    coarse_matrix = std::make_unique<TrilinosWrappers::SparseMatrix>();
-    CoarseMatrixBuilder<dim, number, OperatorType>::build(dof_handler, *level_operators[0], *coarse_matrix);
+    // Assemble coarse matrix
+    {
+      TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::Setup::Multigrid::CoarseMatrix");
+      coarse_matrix = std::make_unique<TrilinosWrappers::SparseMatrix>();
+      CoarseMatrixBuilder<dim, number, OperatorType>::build(*this->level_dof_handlers[0], *level_operators[0], *coarse_matrix);
+    }
 
-    mg_coarse_wrapper = std::make_unique<CoarseWrapperType>();
-    mg_coarse_wrapper->initialize(*coarse_matrix, dof_handler);
+    // Initialize direct solver
+    {
+      TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::Setup::Multigrid::DirectSolver");
+      mg_coarse_wrapper = std::make_unique<CoarseWrapperType>();
+      mg_coarse_wrapper->initialize(*coarse_matrix, *this->level_dof_handlers[0]);
+    }
 
     // In the end setup multigrid and precondtioner
     multigrid = std::make_unique<Multigrid<VectorType>>(*mg_matrix_wrapper, *mg_coarse_wrapper, *this->transfer, *mg_smoother_wrapper, *mg_smoother_wrapper);
@@ -156,7 +173,7 @@ template class solver::MultigridPreconditioner<
   float,
   solver::SP3Operator<1u, float>,
   FloatBlockVector,
-  solver::SP3BlockMGTransfer<1u, float>,
+  solver::MGTransferBlockGlobalCoarsening<1u, float>,
   solver::BlockDiagonalPreconditioner<float>,
   solver::MGCoarseGridTrilinosBlockWrapper<1u, float>>;
 using MGPrecSP3Float1 = solver::MultigridPreconditioner<
@@ -164,7 +181,7 @@ using MGPrecSP3Float1 = solver::MultigridPreconditioner<
   float,
   solver::SP3Operator<1u, float>,
   FloatBlockVector,
-  solver::SP3BlockMGTransfer<1u, float>,
+  solver::MGTransferBlockGlobalCoarsening<1u, float>,
   solver::BlockDiagonalPreconditioner<float>,
   solver::MGCoarseGridTrilinosBlockWrapper<1u, float>>;
 template void MGPrecSP3Float1::vmult<DoubleBlockVector>(DoubleBlockVector &dst, const DoubleBlockVector &src) const;
@@ -175,7 +192,7 @@ template class solver::MultigridPreconditioner<
   float,
   solver::SP3Operator<2u, float>,
   FloatBlockVector,
-  solver::SP3BlockMGTransfer<2u, float>,
+  solver::MGTransferBlockGlobalCoarsening<2u, float>,
   solver::BlockDiagonalPreconditioner<float>,
   solver::MGCoarseGridTrilinosBlockWrapper<2u, float>>;
 using MGPrecSP3Float2 = solver::MultigridPreconditioner<
@@ -183,7 +200,7 @@ using MGPrecSP3Float2 = solver::MultigridPreconditioner<
   float,
   solver::SP3Operator<2u, float>,
   FloatBlockVector,
-  solver::SP3BlockMGTransfer<2u, float>,
+  solver::MGTransferBlockGlobalCoarsening<2u, float>,
   solver::BlockDiagonalPreconditioner<float>,
   solver::MGCoarseGridTrilinosBlockWrapper<2u, float>>;
 template void MGPrecSP3Float2::vmult<DoubleBlockVector>(DoubleBlockVector &dst, const DoubleBlockVector &src) const;
@@ -194,7 +211,7 @@ template class solver::MultigridPreconditioner<
   float,
   solver::SP3Operator<3u, float>,
   FloatBlockVector,
-  solver::SP3BlockMGTransfer<3u, float>,
+  solver::MGTransferBlockGlobalCoarsening<3u, float>,
   solver::BlockDiagonalPreconditioner<float>,
   solver::MGCoarseGridTrilinosBlockWrapper<3u, float>>;
 using MGPrecSP3Float3 = solver::MultigridPreconditioner<
@@ -202,7 +219,7 @@ using MGPrecSP3Float3 = solver::MultigridPreconditioner<
   float,
   solver::SP3Operator<3u, float>,
   FloatBlockVector,
-  solver::SP3BlockMGTransfer<3u, float>,
+  solver::MGTransferBlockGlobalCoarsening<3u, float>,
   solver::BlockDiagonalPreconditioner<float>,
   solver::MGCoarseGridTrilinosBlockWrapper<3u, float>>;
 template void MGPrecSP3Float3::vmult<DoubleBlockVector>(DoubleBlockVector &dst, const DoubleBlockVector &src) const;

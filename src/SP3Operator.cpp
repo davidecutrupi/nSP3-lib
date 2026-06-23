@@ -7,6 +7,7 @@
 #include <deal.II/base/types.h>
 #include <deal.II/base/exceptions.h>
 #include <deal.II/base/vectorization.h>
+#include <deal.II/dofs/dof_tools.h>
 #include <deal.II/lac/affine_constraints.h>
 #include <deal.II/lac/trilinos_sparsity_pattern.h>
 
@@ -594,6 +595,125 @@ namespace solver {
 
 
   template <unsigned int dim, typename number>
+  void SP3Operator<dim, number>::compute_matrix_on_active_dofs(const DoFHandler<dim> &dof_handler, TrilinosWrappers::SparseMatrix &matrix) const {
+    const IndexSet locally_owned_scalar_dofs = dof_handler.locally_owned_dofs();
+    const types::global_dof_index scalar_size = dof_handler.n_dofs();
+
+    TrilinosWrappers::SparsityPattern flux_sparsity(locally_owned_scalar_dofs, MPI_COMM_WORLD);
+    DoFTools::make_flux_sparsity_pattern(dof_handler, flux_sparsity);
+    flux_sparsity.compress();
+
+    TrilinosWrappers::SparsityPattern cell_sparsity(locally_owned_scalar_dofs, MPI_COMM_WORLD);
+    DoFTools::make_sparsity_pattern(dof_handler, cell_sparsity);
+    cell_sparsity.compress();
+
+    IndexSet locally_owned_block_dofs(2 * scalar_size);
+    locally_owned_block_dofs.add_indices(locally_owned_scalar_dofs);
+    locally_owned_block_dofs.add_indices(locally_owned_scalar_dofs, scalar_size);
+    locally_owned_block_dofs.compress();
+
+    TrilinosWrappers::SparsityPattern block_sparsity(locally_owned_block_dofs, MPI_COMM_WORLD, flux_sparsity.max_entries_per_row() + cell_sparsity.max_entries_per_row());
+
+    const auto add_sparsity_block = [&](
+      const TrilinosWrappers::SparsityPattern &scalar_sparsity,
+      const types::global_dof_index row_offset,
+      const types::global_dof_index col_offset
+    ) {
+      std::vector<types::global_dof_index> cols;
+
+      for (const auto row : locally_owned_scalar_dofs) {
+        Assert(row < scalar_sparsity.n_rows(), ExcInternalError());
+        Assert(scalar_sparsity.row_is_stored_locally(row), ExcMessage("Trying to read a non-locally stored Trilinos sparsity row."));
+
+        const auto row_length = scalar_sparsity.row_length(row);
+
+        if (row_length == static_cast<types::global_dof_index>(-1) || row_length == 0)
+          continue;
+
+        cols.clear();
+        cols.reserve(row_length);
+
+        auto entry = scalar_sparsity.begin(row);
+        for (types::global_dof_index k = 0; k < row_length; ++k, ++entry)
+          cols.push_back(entry->column() + col_offset);
+        block_sparsity.add_entries(row + row_offset, cols.begin(), cols.end(), true);
+      }
+    };
+
+    add_sparsity_block(flux_sparsity, 0, 0);
+    add_sparsity_block(flux_sparsity, scalar_size, scalar_size);
+    add_sparsity_block(cell_sparsity, 0, scalar_size);
+    add_sparsity_block(cell_sparsity, scalar_size, 0);
+    block_sparsity.compress();
+
+    matrix.reinit(block_sparsity);
+
+    const auto add_matrix_block = [&](
+      const TrilinosWrappers::SparseMatrix &block,
+      const types::global_dof_index row_offset,
+      const types::global_dof_index col_offset
+    ) {
+      std::vector<types::global_dof_index> cols;
+      std::vector<TrilinosScalar> vals;
+
+      for (const auto row : locally_owned_scalar_dofs) {
+        Assert(row < block.m(), ExcInternalError());
+        Assert(block.in_local_range(row), ExcMessage("Trying to read a non-local Trilinos matrix row."));
+
+        const auto row_length = block.row_length(row);
+        if (row_length == 0)
+          continue;
+
+        cols.clear();
+        vals.clear();
+        cols.reserve(row_length);
+        vals.reserve(row_length);
+
+        auto entry = block.begin(row);
+        for (unsigned int k = 0; k < row_length; ++k, ++entry) {
+          const TrilinosScalar value = entry->value();
+
+          if (value != 0.0) {
+            cols.push_back(entry->column() + col_offset);
+            vals.push_back(value);
+          }
+        }
+
+        if (!cols.empty())
+          matrix.add(row + row_offset, cols.size(), cols.data(), vals.data(), true, true);
+      }
+    };
+
+    {
+      TrilinosWrappers::SparseMatrix flux_block;
+      flux_block.reinit(flux_sparsity);
+
+      compute_scalar_matrix(flux_block, 0, 0);
+      flux_block.compress(VectorOperation::add);
+      add_matrix_block(flux_block, 0, 0);
+
+      flux_block = 0.0;
+
+      compute_scalar_matrix(flux_block, 1, 1);
+      flux_block.compress(VectorOperation::add);
+      add_matrix_block(flux_block, scalar_size, scalar_size);
+    }
+
+    {
+      TrilinosWrappers::SparseMatrix cell_block;
+      cell_block.reinit(cell_sparsity);
+
+      compute_scalar_matrix(cell_block, 0, 1);
+      cell_block.compress(VectorOperation::add);
+      add_matrix_block(cell_block, 0, scalar_size);
+      add_matrix_block(cell_block, scalar_size, 0);
+    }
+
+    matrix.compress(VectorOperation::add);
+  }
+
+
+  template <unsigned int dim, typename number> // TODO remove?
   void SP3Operator<dim, number>::compute_matrix(const DoFHandler<dim> &dof_handler, TrilinosWrappers::SparseMatrix &matrix) const {
     const IndexSet locally_owned_scalar_dofs = dof_handler.locally_owned_mg_dofs(0);
     const types::global_dof_index scalar_size = dof_handler.n_dofs(0);
