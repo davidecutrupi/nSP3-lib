@@ -640,9 +640,14 @@ namespace solver {
     data_out.build_patches();
     
     const bool needs_separator = !parameters.output_directory.empty() && parameters.output_directory.back() != '/';
-    const std::string filename = parameters.output_directory + (needs_separator ? "/" : "") + parameters.benchmark + "-" + Utilities::int_to_string(group, 2) + ".vtu";
-    std::ofstream output(filename);
-    data_out.write_vtu(output);
+
+    data_out.write_vtu_with_pvtu_record(
+      parameters.output_directory + (needs_separator ? "/" : ""),
+      parameters.benchmark + "-" + parameters.fe_type,
+      group,
+      MPI_COMM_WORLD,
+      2, 0
+    );
   }
 
 }
