@@ -26,7 +26,8 @@ namespace solver {
       p_degree(p_degree),
       dof_index(dof_index),
       energy_group(group),
-      geometry_data(geom_data)
+      geometry_data(geom_data),
+      diagonal_is_up_to_date(false)
     {}
 
     void clear();
