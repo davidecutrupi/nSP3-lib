@@ -71,17 +71,21 @@ namespace solver {
     TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::Setup::Dofs");
     dof_handler.distribute_dofs(*fe);
     dof_handler.distribute_mg_dofs();
+    fe_discretization::build_constraints<dim, double>(dof_handler, constraints, parameters);
   }
 
 
   template <unsigned int dim>
   void EnergyGroup<dim>::setup_system(std::shared_ptr<const MatrixFree<dim, double>> system_mf_storage) {
     TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::Setup");
-   
+
     setup_coefficients(system_mf_storage);
 
+    // Check if it is CG or DG
+    const bool use_interior_face_terms = fe_discretization::uses_interior_face_terms(parameters);
+
     // Setup SP3 operator
-    sp3_operator = std::make_shared<SP3Operator<dim, double>>(p_degree, group, group, geometry_data);
+    sp3_operator = std::make_shared<SP3Operator<dim, double>>(p_degree, group, group, geometry_data, use_interior_face_terms);
     sp3_operator->initialize(system_mf_storage, material_manager->get_cache(0), material_data);
 
     sp3_operator->initialize_dof_vector(solution);
@@ -92,11 +96,11 @@ namespace solver {
 
     if (material_data.has_discontinuity_factors()) {
       // Setup zero mode operator
-      zero_mode_operator = std::make_shared<ZeroModeOperator<dim, double>>(p_degree, group, group, geometry_data);
+      zero_mode_operator = std::make_shared<ZeroModeOperator<dim, double>>(p_degree, group, group, geometry_data, use_interior_face_terms);
       zero_mode_operator->initialize(system_mf_storage, material_manager->get_cache(0), material_data);
   
       // Setup second mode operator
-      second_mode_operator = std::make_shared<SecondModeOperator<dim, double>>(p_degree, group, group, geometry_data);
+      second_mode_operator = std::make_shared<SecondModeOperator<dim, double>>(p_degree, group, group, geometry_data, use_interior_face_terms);
       second_mode_operator->initialize(system_mf_storage, material_manager->get_cache(0), material_data);
   
       // Setup coupling operator
@@ -123,8 +127,8 @@ namespace solver {
     if (needs_p_transfer) { // Interpolate old solutions
       TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::HP::execute-p");
 
-      FETools::interpolate(*transfer_old_dof_handler, h_interpolated_solution->block(0), dof_handler, solution.block(0));
-      FETools::interpolate(*transfer_old_dof_handler, h_interpolated_solution->block(1), dof_handler, solution.block(1));
+      FETools::interpolate(*transfer_old_dof_handler, h_interpolated_solution->block(0), dof_handler, constraints, solution.block(0));
+      FETools::interpolate(*transfer_old_dof_handler, h_interpolated_solution->block(1), dof_handler, constraints, solution.block(1));
       
       transfer_old_dof_handler.reset();
       transfer_old_fe.reset();
@@ -133,7 +137,12 @@ namespace solver {
       h_interpolated_solution.reset();
     }
     else if (h_interpolated_solution) { // Only h-refinement
-      solution = *h_interpolated_solution;
+      solution.block(0).copy_locally_owned_data_from(h_interpolated_solution->block(0));
+      solution.block(1).copy_locally_owned_data_from(h_interpolated_solution->block(1));
+
+      constraints.distribute(solution.block(0));
+      constraints.distribute(solution.block(1));
+      
       h_interpolated_solution.reset();
     }
     else {
@@ -150,12 +159,18 @@ namespace solver {
 
     mg_level_dof_handlers.clear();
     mg_level_fes.clear();
+    mg_level_constraints.clear();
     mg_triangulations.clear();
 
     // Construct the triangulations hierarchy
     const auto h_triangulations = MGTransferGlobalCoarseningTools::create_geometric_coarsening_sequence(*triangulation);
 
-    auto h_coarsest_fe = std::make_shared<FE_DGQ<dim>>(p_degree);
+    auto make_shared_fe = [this](const unsigned int degree) {
+      std::unique_ptr<FiniteElement<dim>> scalar_fe = fe_discretization::make_scalar_fe<dim>(parameters, degree);
+      return std::shared_ptr<FiniteElement<dim>>(std::move(scalar_fe));
+    };
+
+    auto h_coarsest_fe = make_shared_fe(p_degree);
     auto h_coarsest_dof_handler = std::make_shared<DoFHandler<dim>>(*h_triangulations.front());
     h_coarsest_dof_handler->distribute_dofs(*h_coarsest_fe);
 
@@ -174,38 +189,47 @@ namespace solver {
     mg_triangulations.reserve(h_triangulations.size() + p_level_degrees.size());
     mg_level_dof_handlers.reserve(h_triangulations.size() + p_level_degrees.size());
     mg_level_fes.reserve(h_triangulations.size() + p_level_degrees.size());
+    mg_level_constraints.reserve(h_triangulations.size() + p_level_degrees.size());
 
-    auto append_level = [this](const std::shared_ptr<const Triangulation<dim>> &level_triangulation, const unsigned int level_p_degree) {
+    // Lambda to append a (Tria, FE, DoFHandler) to te levels vectors
+    auto append_level = [this](
+      const std::shared_ptr<const Triangulation<dim>> &level_triangulation,
+      const std::shared_ptr<FiniteElement<dim>> &level_fe,
+      const std::shared_ptr<DoFHandler<dim>> &level_dof_handler
+    ) {
       mg_triangulations.push_back(level_triangulation);
-      mg_level_fes.push_back(std::make_shared<FE_DGQ<dim>>(level_p_degree));
-      mg_level_dof_handlers.push_back(std::make_shared<DoFHandler<dim>>(*level_triangulation));
-      mg_level_dof_handlers.back()->distribute_dofs(*mg_level_fes.back());
+      mg_level_fes.push_back(level_fe);
+      mg_level_dof_handlers.push_back(level_dof_handler);
+      mg_level_constraints.push_back(std::make_shared<AffineConstraints<float>>());
+      fe_discretization::build_constraints<dim, float>(*mg_level_dof_handlers.back(), *mg_level_constraints.back(), parameters);
     };
 
-    // Append all polynomial levels (h_level = 0 and p changes). This code adds the active level (finest h and actual p too)
+    auto create_new_level = [&append_level, &make_shared_fe](const std::shared_ptr<const Triangulation<dim>> &level_triangulation, const unsigned int level_p_degree) {
+      auto level_fe = make_shared_fe(level_p_degree);
+      auto level_dof_handler = std::make_shared<DoFHandler<dim>>(*level_triangulation);
+      level_dof_handler->distribute_dofs(*level_fe);
+      append_level(level_triangulation, level_fe, level_dof_handler);
+    };
+
+    // Append all polynomial levels (h_level = 0 and p changes). This code adds the coarsest level with actual p too
     unsigned int first_h_level = 0;
     if (!p_level_degrees.empty()) {
       for (const unsigned int level_p_degree : p_level_degrees) {
-        if (level_p_degree == p_degree) {
-          mg_triangulations.push_back(h_triangulations.front());
-          mg_level_fes.push_back(h_coarsest_fe);
-          mg_level_dof_handlers.push_back(h_coarsest_dof_handler);
-        }
+        if (level_p_degree == p_degree)
+          append_level(h_triangulations.front(), h_coarsest_fe, h_coarsest_dof_handler);
         else
-          append_level(h_triangulations.front(), level_p_degree);
+          create_new_level(h_triangulations.front(), level_p_degree);
       }
       first_h_level = 1;
     }
     else {
-      mg_triangulations.push_back(h_triangulations.front());
-      mg_level_fes.push_back(h_coarsest_fe);
-      mg_level_dof_handlers.push_back(h_coarsest_dof_handler);
+      append_level(h_triangulations.front(), h_coarsest_fe, h_coarsest_dof_handler);
       first_h_level = 1;
     }
 
     // Append all h levels, except for the finest (h_level grows from one and p fixed)
     for (unsigned int h_level = first_h_level; h_level < h_triangulations.size(); ++h_level)
-      append_level(h_triangulations[h_level], p_degree);
+      create_new_level(h_triangulations[h_level], p_degree);
   }
 
 
@@ -219,8 +243,8 @@ namespace solver {
     std::vector<std::shared_ptr<ZeroModeOperator<dim, float>>> level_zero_operators(nlevels);
     std::vector<std::shared_ptr<SecondModeOperator<dim, float>>> level_second_operators(nlevels);
 
-    AffineConstraints<float> dummy;
-    dummy.close();
+    // Check if it is CG or DG
+    const bool use_interior_face_terms = fe_discretization::uses_interior_face_terms(parameters);
 
     // Setup mg material manager
     mg_material_manager = std::make_shared<CrossSectionManager<dim, float>>();
@@ -229,33 +253,29 @@ namespace solver {
     {
       TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::Setup::Multigrid::LevelOperators");
       for (unsigned int level = 0; level < nlevels; ++level) {
-        typename MatrixFree<dim, float>::AdditionalData additional_data;
-        additional_data.tasks_parallel_scheme = MatrixFree<dim, float>::AdditionalData::none;
-        additional_data.mapping_update_flags = (update_values | update_gradients | update_JxW_values);
-        additional_data.mapping_update_flags_inner_faces = (update_values | update_gradients | update_JxW_values | update_normal_vectors | update_inverse_jacobians);
-        additional_data.mapping_update_flags_boundary_faces = (update_values | update_JxW_values);
-  
+        const unsigned int level_p_degree = mg_level_fes[level]->degree;
+
+        const auto additional_data = fe_discretization::make_matrix_free_additional_data<dim, float>(use_interior_face_terms);
         // TODO conviene fare un vector di storages che contiene gli storage di ogni livello della triangulation 
         // (ognuno con una lista di dof hanlder di ogni gruppo) direttamente nella classe NeutronSolver?
         // Cioè conviene fare come per lo storage di livello? 
         const auto mg_mf_storage = std::make_shared<MatrixFree<dim, float>>(); 
-        mg_mf_storage->reinit(mapping, *mg_level_dof_handlers[level], dummy, QGauss<1>(mg_level_fes[level]->degree + 1), additional_data);
+        mg_mf_storage->reinit(mapping, *mg_level_dof_handlers[level], *mg_level_constraints[level], QGauss<1>(level_p_degree + 1), additional_data);
         
         // Populate coefficients
         mg_material_manager->update(*mg_mf_storage, level, group, material_data);
   
         // Create the level operator and add to level_operators
-        const unsigned int level_p_degree = mg_level_fes[level]->degree;
-        level_zero_operators[level] = std::make_shared<ZeroModeOperator<dim, float>>(level_p_degree, 0, group, geometry_data);
+        level_zero_operators[level] = std::make_shared<ZeroModeOperator<dim, float>>(level_p_degree, 0, group, geometry_data, use_interior_face_terms);
         level_zero_operators[level]->initialize(mg_mf_storage, mg_material_manager->get_cache(level), material_data);
   
-        level_second_operators[level] = std::make_shared<SecondModeOperator<dim, float>>(level_p_degree, 0, group, geometry_data);
+        level_second_operators[level] = std::make_shared<SecondModeOperator<dim, float>>(level_p_degree, 0, group, geometry_data, use_interior_face_terms);
         level_second_operators[level]->initialize(mg_mf_storage, mg_material_manager->get_cache(level), material_data);
       }
     }
 
     auto mg_transfer = std::make_shared<MGTransferGlobalCoarsening<dim, float>>();
-    mg_transfer->build(dof_handler, mg_level_dof_handlers, [level_zero_operators](const unsigned int level, VectorType<float> &vector) {
+    mg_transfer->build(dof_handler, mg_level_dof_handlers, mg_level_constraints, [level_zero_operators](const unsigned int level, VectorType<float> &vector) {
       level_zero_operators[level]->initialize_dof_vector(vector);
     });
 
@@ -263,8 +283,8 @@ namespace solver {
 
     inner_preconditioner_zero = std::make_shared<InnerPreconditionerZero>();
     inner_preconditioner_second = std::make_shared<InnerPrecontionerSecond>();
-    inner_preconditioner_zero->initialize(dof_handler, level_zero_operators, mg_level_dof_handlers, mg_transfer, coarse_solver_policy);
-    inner_preconditioner_second->initialize(dof_handler, level_second_operators, mg_level_dof_handlers, mg_transfer, coarse_solver_policy);
+    inner_preconditioner_zero->initialize(dof_handler, level_zero_operators, mg_level_dof_handlers, mg_transfer, *mg_level_constraints[0], coarse_solver_policy);
+    inner_preconditioner_second->initialize(dof_handler, level_second_operators, mg_level_dof_handlers, mg_transfer, *mg_level_constraints[0], coarse_solver_policy);
   }
 
 
@@ -277,8 +297,8 @@ namespace solver {
     
     std::vector<std::shared_ptr<SP3Operator<dim, float>>> level_sp3_operators(nlevels);
 
-    AffineConstraints<float> dummy;
-    dummy.close();
+    // Check if it is CG or DG
+    const bool use_interior_face_terms = fe_discretization::uses_interior_face_terms(parameters);
 
     // Setup mg material manager
     mg_material_manager = std::make_shared<CrossSectionManager<dim, float>>();
@@ -287,37 +307,33 @@ namespace solver {
     {
       TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::Setup::Multigrid::LevelOperators");
       for (unsigned int level = 0; level < nlevels; ++level) {
-        typename MatrixFree<dim, float>::AdditionalData additional_data;
-        additional_data.tasks_parallel_scheme = MatrixFree<dim, float>::AdditionalData::none;
-        additional_data.mapping_update_flags = (update_values | update_gradients | update_JxW_values);
-        additional_data.mapping_update_flags_inner_faces = (update_values | update_gradients | update_JxW_values | update_normal_vectors | update_inverse_jacobians);
-        additional_data.mapping_update_flags_boundary_faces = (update_values | update_JxW_values);
-  
+        const unsigned int level_p_degree = mg_level_fes[level]->degree;
+
+        const auto additional_data = fe_discretization::make_matrix_free_additional_data<dim, float>(use_interior_face_terms);
         // TODO conviene fare un vector di storages che contiene gli storage di ogni livello della triangulation 
         // (ognuno con una lista di dof hanlder di ogni gruppo) direttamente nella classe NeutronSolver?
         // Cioè conviene fare come per lo storage di livello? 
         const auto mg_mf_storage = std::make_shared<MatrixFree<dim, float>>(); 
-        mg_mf_storage->reinit(mapping, *mg_level_dof_handlers[level], dummy, QGauss<1>(mg_level_fes[level]->degree + 1), additional_data);
+        mg_mf_storage->reinit(mapping, *mg_level_dof_handlers[level], *mg_level_constraints[level], QGauss<1>(level_p_degree + 1), additional_data);
         
         // Populate coefficients
         mg_material_manager->update(*mg_mf_storage, level, group, material_data);
   
         // Create the SP3 level operator and add to level_operators
-        const unsigned int level_p_degree = mg_level_fes[level]->degree;
-        level_sp3_operators[level] = std::make_shared<SP3Operator<dim, float>>(level_p_degree, 0, group, geometry_data);
+        level_sp3_operators[level] = std::make_shared<SP3Operator<dim, float>>(level_p_degree, 0, group, geometry_data, use_interior_face_terms);
         level_sp3_operators[level]->initialize(mg_mf_storage, mg_material_manager->get_cache(level), material_data);
       }
     }
 
     auto mg_transfer = std::make_shared<MGTransferBlockGlobalCoarsening<dim, float>>();
-    mg_transfer->build(dof_handler, mg_level_dof_handlers, [level_sp3_operators](const unsigned int level, BlockVectorType<float> &vector) {
+    mg_transfer->build(dof_handler, mg_level_dof_handlers, mg_level_constraints, [level_sp3_operators](const unsigned int level, BlockVectorType<float> &vector) {
       level_sp3_operators[level]->initialize_dof_vector(vector);
     });
 
     const CoarseSolverPolicy coarse_solver_policy{parameters.coarse_direct_klu_max_dofs};
 
     coupled_mg_preconditioner = std::make_shared<CoupledMGPreconditioner>();
-    coupled_mg_preconditioner->initialize(dof_handler, level_sp3_operators, mg_level_dof_handlers, mg_transfer, coarse_solver_policy);
+    coupled_mg_preconditioner->initialize(dof_handler, level_sp3_operators, mg_level_dof_handlers, mg_transfer, *mg_level_constraints[0], coarse_solver_policy);
   }
 
 
@@ -325,6 +341,21 @@ namespace solver {
   void EnergyGroup<dim>::compute_rhs(const std::vector<std::unique_ptr<EnergyGroup<dim>>> &all_groups, bool is_adjoint) {
     TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::Rhs");
     
+    for (const auto &eg : all_groups) {
+      if (is_adjoint) {
+        eg->adjoint_solution_old.block(0).update_ghost_values();
+        eg->adjoint_solution_old.block(1).update_ghost_values();
+        eg->adjoint_solution.block(0).update_ghost_values();
+        eg->adjoint_solution.block(1).update_ghost_values();
+      }
+      else {
+        eg->solution_old.block(0).update_ghost_values();
+        eg->solution_old.block(1).update_ghost_values();
+        eg->solution.block(0).update_ghost_values();
+        eg->solution.block(1).update_ghost_values();
+      }
+    }
+
     system_rhs = 0;
 
     const double c11 = 1.0;
@@ -427,6 +458,22 @@ namespace solver {
     }
 
     system_rhs.compress(VectorOperation::add);
+
+    for (const auto &eg : all_groups) {
+      if (is_adjoint) {
+        eg->adjoint_solution_old.block(0).zero_out_ghost_values();
+        eg->adjoint_solution_old.block(1).zero_out_ghost_values();
+        eg->adjoint_solution.block(0).zero_out_ghost_values();
+        eg->adjoint_solution.block(1).zero_out_ghost_values();
+      }
+      else {
+        eg->solution_old.block(0).zero_out_ghost_values();
+        eg->solution_old.block(1).zero_out_ghost_values();
+        eg->solution.block(0).zero_out_ghost_values();
+        eg->solution.block(1).zero_out_ghost_values();
+      }
+    }
+
   }
 
 
@@ -459,11 +506,25 @@ namespace solver {
       std::cerr<<"Group: "<<group<<" | last iter: "<<solver_control.last_step();
       throw exc;
     }
+
+    auto &solved_solution = is_adjoint ? adjoint_solution : solution;
+    constraints.distribute(solved_solution.block(0));
+    constraints.distribute(solved_solution.block(1));
   }
 
 
   template <unsigned int dim> // TODO parallelize with cell_loop
   double EnergyGroup<dim>::get_fission_source(bool is_adjoint) const {
+
+    if (is_adjoint) {
+      adjoint_solution.block(0).update_ghost_values();
+      adjoint_solution.block(1).update_ghost_values();
+    }
+    else {
+      solution.block(0).update_ghost_values();
+      solution.block(1).update_ghost_values();
+    }
+    
     double local_fission_source = 0;
     
     const auto mf_storage = sp3_operator->get_matrix_free();
@@ -511,6 +572,15 @@ namespace solver {
       }
     }
 
+    if (is_adjoint) {
+      adjoint_solution.block(0).zero_out_ghost_values();
+      adjoint_solution.block(1).zero_out_ghost_values();
+    }
+    else {
+      solution.block(0).zero_out_ghost_values();
+      solution.block(1).zero_out_ghost_values();
+    }
+
     return local_fission_source;
   }
 
@@ -538,8 +608,25 @@ namespace solver {
   template <unsigned int dim>
   void EnergyGroup<dim>::prepare_h_transfer() {
     TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::HP::prepare-h");
+    
+    const IndexSet locally_owned = dof_handler.locally_owned_dofs();
+    const IndexSet locally_relevant = DoFTools::extract_locally_relevant_dofs(dof_handler);
+
+    h_transfer_input.resize(2);
+    h_transfer_input[0] = std::make_unique<VectorType<double>>();
+    h_transfer_input[1] = std::make_unique<VectorType<double>>();
+
+    h_transfer_input[0]->reinit(locally_owned, locally_relevant, MPI_COMM_WORLD);
+    h_transfer_input[1]->reinit(locally_owned, locally_relevant, MPI_COMM_WORLD);
+
+    h_transfer_input[0]->copy_locally_owned_data_from(solution.block(0));
+    h_transfer_input[1]->copy_locally_owned_data_from(solution.block(1));
+
+    h_transfer_input[0]->update_ghost_values();
+    h_transfer_input[1]->update_ghost_values();
+    
     sol_transfer = std::make_unique<SolutionTransfer<dim, VectorType<double>>>(dof_handler);
-    std::vector<const VectorType<double>*> in_vectors = { &solution.block(0), &solution.block(1) };
+    std::vector<const VectorType<double>*> in_vectors = { h_transfer_input[0].get(), h_transfer_input[1].get() };
     sol_transfer->prepare_for_coarsening_and_refinement(in_vectors);
   }
 
@@ -549,20 +636,30 @@ namespace solver {
     TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::HP::execute-h"); 
 
     dof_handler.distribute_dofs(*fe);
+    fe_discretization::build_constraints<dim, double>(dof_handler, constraints, parameters);
 
     IndexSet locally_owned = dof_handler.locally_owned_dofs();
+    IndexSet locally_relevant = DoFTools::extract_locally_relevant_dofs(dof_handler);
+
     h_interpolated_solution = std::make_unique<BlockVectorType<double>>(2);
-    h_interpolated_solution->block(0).reinit(locally_owned, MPI_COMM_WORLD);
-    h_interpolated_solution->block(1).reinit(locally_owned, MPI_COMM_WORLD);
+    h_interpolated_solution->block(0).reinit(locally_owned, locally_relevant, MPI_COMM_WORLD);
+    h_interpolated_solution->block(1).reinit(locally_owned, locally_relevant, MPI_COMM_WORLD);
     h_interpolated_solution->collect_sizes();
 
-    Assert(h_interpolated_solution->n_blocks() == 2, ExcMessage("EnergyGroup::execute_h_transfer expects exactly two SP3 mode blocks."));
-    Assert(h_interpolated_solution->block(0).size() == h_interpolated_solution->block(1).size(), ExcMessage("SP3 mode blocks must have the same scalar DoF-space size after h-transfer reinit."));
-    Assert(h_interpolated_solution->block(0).locally_owned_elements() == h_interpolated_solution->block(1).locally_owned_elements(), ExcMessage("SP3 mode blocks must have identical locally owned scalar DoF partitions after h-transfer reinit."));
+    h_interpolated_solution->block(0).zero_out_ghost_values();
+    h_interpolated_solution->block(1).zero_out_ghost_values();
 
     std::vector<VectorType<double>*> out_vectors = { &h_interpolated_solution->block(0), &h_interpolated_solution->block(1) };
     sol_transfer->interpolate(out_vectors);
+
+    constraints.distribute(h_interpolated_solution->block(0));
+    constraints.distribute(h_interpolated_solution->block(1));
+
+    h_interpolated_solution->block(0).update_ghost_values();
+    h_interpolated_solution->block(1).update_ghost_values();
+
     sol_transfer.reset();
+    h_transfer_input.clear();
   }
 
 
@@ -597,7 +694,7 @@ namespace solver {
       p_degree = new_degree; 
 
       dof_handler.clear();
-      fe = std::make_unique<FE_DGQ<dim>>(p_degree);
+      fe = fe_discretization::make_scalar_fe<dim>(parameters, p_degree);
     }
   }
 

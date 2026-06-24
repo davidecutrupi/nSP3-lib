@@ -11,6 +11,7 @@
 #include <deal.II/dofs/dof_handler.h>
 #include <deal.II/dofs/dof_tools.h>
 
+#include <deal.II/lac/affine_constraints.h>
 #include <deal.II/lac/la_parallel_block_vector.h>
 #include <deal.II/lac/la_parallel_vector.h>
 #include <deal.II/lac/trilinos_solver.h>
@@ -187,20 +188,25 @@ namespace solver {
   public:
     // Used with ZeroModeOperator and SecondModeOperator
     template <typename T = OperatorType, typename std::enable_if<!std::is_same<T, SP3Operator<dim, number>>::value, int>::type = 0>
-    static void build(const dealii::DoFHandler<dim> &dof_handler, const OperatorType &level_operator, dealii::TrilinosWrappers::SparseMatrix &matrix) {
+    static void build(const dealii::DoFHandler<dim> &dof_handler, const OperatorType &level_operator, dealii::TrilinosWrappers::SparseMatrix &matrix, const dealii::AffineConstraints<number> &constraints) {
       const dealii::IndexSet locally_owned_level_dofs = dof_handler.locally_owned_dofs();
       dealii::TrilinosWrappers::SparsityPattern dsp(locally_owned_level_dofs, MPI_COMM_WORLD);
-      dealii::DoFTools::make_flux_sparsity_pattern(dof_handler, dsp);
+
+      if (level_operator.uses_interior_face_terms())
+        dealii::DoFTools::make_flux_sparsity_pattern(dof_handler, dsp, constraints);
+      else
+        dealii::DoFTools::make_sparsity_pattern(dof_handler, dsp, constraints);
+
       dsp.compress();
       
       matrix.reinit(dsp);
-      level_operator.compute_matrix(matrix);
+      level_operator.compute_matrix(matrix, constraints);
       matrix.compress(dealii::VectorOperation::add);
     }
 
     // Used with SP3Operator
-    static void build(const dealii::DoFHandler<dim> &dof_handler, const SP3Operator<dim, number> &level_operator, dealii::TrilinosWrappers::SparseMatrix &matrix) {
-      level_operator.compute_matrix_on_active_dofs(dof_handler, matrix);
+    static void build(const dealii::DoFHandler<dim> &dof_handler, const SP3Operator<dim, number> &level_operator, dealii::TrilinosWrappers::SparseMatrix &matrix, const dealii::AffineConstraints<number> &constraints) {
+      level_operator.compute_matrix_on_active_dofs(dof_handler, matrix, constraints);
     }
   };
 
@@ -211,14 +217,14 @@ namespace solver {
     using VectorType = dealii::LinearAlgebra::distributed::Vector<number>;
     using InitializeVectorFunction = std::function<void(const unsigned int, VectorType &)>;
 
-    void build(const dealii::DoFHandler<dim> &active_dof_handler, const std::vector<std::shared_ptr<dealii::DoFHandler<dim>>> &level_dof_handlers, const InitializeVectorFunction &initialize_dof_vector) {
+    void build(const dealii::DoFHandler<dim> &active_dof_handler, const std::vector<std::shared_ptr<dealii::DoFHandler<dim>>> &level_dof_handlers, const std::vector<std::shared_ptr<dealii::AffineConstraints<number>>> &level_constraints, const InitializeVectorFunction &initialize_dof_vector) {
       AssertThrow(!level_dof_handlers.empty(), dealii::ExcMessage("No levels provided to global coarsening GMG transfer."));
 
       const unsigned int max_level = level_dof_handlers.size() - 1;
       two_level_transfers.resize(0, max_level);
 
       for (unsigned int level = 1; level <= max_level; ++level)
-        two_level_transfers[level].reinit(*level_dof_handlers[level], *level_dof_handlers[level - 1]);
+        two_level_transfers[level].reinit(*level_dof_handlers[level], *level_dof_handlers[level - 1], *level_constraints[level], *level_constraints[level - 1]);
       
       transfer.initialize_two_level_transfers(two_level_transfers);
       transfer.build(active_dof_handler, initialize_dof_vector);
@@ -264,7 +270,7 @@ namespace solver {
     using BlockVectorType = dealii::LinearAlgebra::distributed::BlockVector<number>;
     using InitializeBlockVectorFunction = std::function<void(const unsigned int, BlockVectorType &)>;
 
-    void build(const dealii::DoFHandler<dim> &active_dof_handler, const std::vector<std::shared_ptr<dealii::DoFHandler<dim>>> &level_dof_handlers, const InitializeBlockVectorFunction &initialize_dof_vector) {
+    void build(const dealii::DoFHandler<dim> &active_dof_handler, const std::vector<std::shared_ptr<dealii::DoFHandler<dim>>> &level_dof_handlers, const std::vector<std::shared_ptr<dealii::AffineConstraints<number>>> &level_constraints, const InitializeBlockVectorFunction &initialize_dof_vector) {
       AssertThrow(!level_dof_handlers.empty(), dealii::ExcMessage("No levels provided to global coarsening GMG transfer."));
 
       const unsigned int max_level = level_dof_handlers.size() - 1;
@@ -275,7 +281,7 @@ namespace solver {
         vector.reinit(prototype.block(0), true);
       };
 
-      scalar_transfer.build(active_dof_handler, level_dof_handlers, initialize_scalar_vector);
+      scalar_transfer.build(active_dof_handler, level_dof_handlers, level_constraints, initialize_scalar_vector);
 
       for (unsigned int block = 0; block < n_blocks; ++block) {
         copy_to_mg_scratch[block].resize(0, max_level);

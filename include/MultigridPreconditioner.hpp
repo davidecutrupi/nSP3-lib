@@ -5,6 +5,7 @@
 #include <deal.II/base/mg_level_object.h>
 
 #include <deal.II/lac/la_parallel_vector.h>
+#include <deal.II/lac/affine_constraints.h>
 #include <deal.II/lac/diagonal_matrix.h>
 #include <deal.II/lac/trilinos_sparse_matrix.h>
 #include <deal.II/lac/precondition.h>
@@ -33,7 +34,7 @@ namespace solver {
     MultigridPreconditioner() = default;
 
     void clear();
-    void initialize(const dealii::DoFHandler<dim> &, const std::vector<std::shared_ptr<OperatorType>> &, const std::vector<std::shared_ptr<dealii::DoFHandler<dim>>> &, std::shared_ptr<TransferType>, const CoarseSolverPolicy & = CoarseSolverPolicy());
+    void initialize(const dealii::DoFHandler<dim> &, const std::vector<std::shared_ptr<OperatorType>> &, const std::vector<std::shared_ptr<dealii::DoFHandler<dim>>> &, std::shared_ptr<TransferType>, const dealii::AffineConstraints<number> &, const CoarseSolverPolicy &  = CoarseSolverPolicy());
     template <typename OtherVectorType> void vmult(OtherVectorType &, const OtherVectorType &) const;
     template <typename OtherVectorType> void Tvmult(OtherVectorType &, const OtherVectorType &) const;
 

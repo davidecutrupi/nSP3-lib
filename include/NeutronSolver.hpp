@@ -6,6 +6,8 @@
 #include "MaterialData.hpp"
 #include "EnergyGroup.hpp"
 
+#include <deal.II/base/exception_macros.h>
+#include <deal.II/base/exceptions.h>
 #include <deal.II/fe/mapping_q1.h>
 
 #include <deal.II/base/conditional_ostream.h>
@@ -17,6 +19,7 @@
 #include <deal.II/lac/la_parallel_block_vector.h>
 
 #include <memory>
+#include <stdexcept>
 
 
 namespace solver {
@@ -41,6 +44,8 @@ namespace solver {
       pcout(std::cout, mpi_rank == 0)
     {
       GlobalTimer::init(MPI_COMM_WORLD, pcout);
+
+      AssertThrow(parameters.fe_type != "CG" || !material_data.has_discontinuity_factors(), dealii::StandardExceptions::ExcNotImplemented("CG-FEM with with discontinuity factors is not supported."));
 
       if constexpr (dim == 1) 
         triangulation = std::make_shared<dealii::Triangulation<dim>>(

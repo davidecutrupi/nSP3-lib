@@ -4,6 +4,7 @@
 #include "GeometryData.hpp"
 #include "CrossSectionManager.hpp"
 #include "SolverParameters.hpp"
+#include "Discretization.hpp"
 
 #include "ZeroModeOperator.hpp"
 #include "SecondModeOperator.hpp"
@@ -16,13 +17,14 @@
 #include "TransposeWrapper.hpp"
 
 #include <deal.II/dofs/dof_handler.h>
-#include <deal.II/fe/fe_dgq.h>
+#include <deal.II/fe/fe.h>
 #include <deal.II/fe/mapping_q1.h>
 
 #include <deal.II/distributed/tria.h>
 #include <deal.II/numerics/solution_transfer.h>
 
 #include <deal.II/lac/diagonal_matrix.h>
+#include <deal.II/lac/affine_constraints.h>
 #include <deal.II/lac/la_parallel_block_vector.h>
 #include <deal.II/lac/solver_control.h>
 #include <deal.II/lac/solver_gmres.h>
@@ -59,7 +61,7 @@ namespace solver {
       geometry_data(geometry_data),
       triangulation(triangulation),
       mapping(mapping),
-      fe(std::make_unique<dealii::FE_DGQ<dim>>(p_degree)),
+      fe(fe_discretization::make_scalar_fe<dim>(parameters, p_degree)),
       dof_handler(*triangulation),
 
       solution(2),
@@ -86,6 +88,8 @@ namespace solver {
     
     unsigned int get_degree() const;
     const dealii::DoFHandler<dim>& get_dof_handler() const { return dof_handler; }
+    const dealii::AffineConstraints<double>& get_constraints() const { return constraints; }
+
     BlockVectorType<double> get_solution() const;
     BlockVectorType<double> get_adjoint_solution() const;
 
@@ -107,14 +111,16 @@ namespace solver {
     std::shared_ptr<dealii::Triangulation<dim>> triangulation;
     const dealii::MappingQ1<dim> &mapping;
     
-    std::unique_ptr<dealii::FE_DGQ<dim>> fe;
+    std::unique_ptr<dealii::FiniteElement<dim>> fe;
     dealii::DoFHandler<dim> dof_handler;
+    dealii::AffineConstraints<double> constraints;
   
     bool needs_p_transfer = false;
-    std::unique_ptr<dealii::FE_DGQ<dim>> transfer_old_fe;
+    std::unique_ptr<dealii::FiniteElement<dim>> transfer_old_fe;
     std::unique_ptr<dealii::DoFHandler<dim>> transfer_old_dof_handler;
 
     // h-refinement
+    std::vector<std::unique_ptr<VectorType<double>>> h_transfer_input;
     std::unique_ptr<BlockVectorType<double>> h_interpolated_solution;
     std::unique_ptr<dealii::SolutionTransfer<dim, VectorType<double>>> sol_transfer;
 
@@ -163,8 +169,9 @@ namespace solver {
 
     // MG levels
     std::vector<std::shared_ptr<const dealii::Triangulation<dim>>> mg_triangulations;
-    std::vector<std::shared_ptr<dealii::FE_DGQ<dim>>> mg_level_fes;
+    std::vector<std::shared_ptr<dealii::FiniteElement<dim>>> mg_level_fes;
     std::vector<std::shared_ptr<dealii::DoFHandler<dim>>> mg_level_dof_handlers;
+    std::vector<std::shared_ptr<dealii::AffineConstraints<float>>> mg_level_constraints;
   
     // FEEvaluation (to compute rhs)
     std::unique_ptr<dealii::FEEvaluation<dim, -1, 0, 1, double>> phi0;

@@ -101,64 +101,76 @@ namespace solver {
 
   template <unsigned int dim, typename number>
   void SP3Operator<dim, number>::vmult(BlockVectorType &dst, const BlockVectorType &src) const {
+    void (SP3Operator<dim, number>::*face_operation)(const MatrixFree<dim, number> &, BlockVectorType &, const BlockVectorType &, const std::pair<unsigned int, unsigned int> &) const = use_interior_face_terms ? &SP3Operator<dim, number>::apply_face : nullptr;
+    const auto face_access = use_interior_face_terms ? MatrixFree<dim, number>::DataAccessOnFaces::gradients : MatrixFree<dim, number>::DataAccessOnFaces::none;
+
     data->loop(
       &SP3Operator::apply_cell,
-      &SP3Operator::apply_face,
+      face_operation,
       &SP3Operator::apply_boundary,
       this,
       dst,
       src,
       true, // Set dst to zero
-      MatrixFree<dim, number>::DataAccessOnFaces::gradients,
-      MatrixFree<dim, number>::DataAccessOnFaces::gradients
+      face_access,
+      face_access
     );
   }
 
 
   template <unsigned int dim, typename number>
   void SP3Operator<dim, number>::vmult_add(BlockVectorType &dst, const BlockVectorType &src) const {
+    void (SP3Operator<dim, number>::*face_operation)(const MatrixFree<dim, number> &, BlockVectorType &, const BlockVectorType &, const std::pair<unsigned int, unsigned int> &) const = use_interior_face_terms ? &SP3Operator<dim, number>::apply_face : nullptr;
+    const auto face_access = use_interior_face_terms ? MatrixFree<dim, number>::DataAccessOnFaces::gradients : MatrixFree<dim, number>::DataAccessOnFaces::none;
+
     data->loop(
       &SP3Operator::apply_cell,
-      &SP3Operator::apply_face,
+      face_operation,
       &SP3Operator::apply_boundary,
       this,
       dst,
       src,
       false, // Do not set dst to zero
-      MatrixFree<dim, number>::DataAccessOnFaces::gradients,
-      MatrixFree<dim, number>::DataAccessOnFaces::gradients
+      face_access,
+      face_access
     );
   }
 
 
   template <unsigned int dim, typename number>
   void SP3Operator<dim, number>::Tvmult(BlockVectorType &dst, const BlockVectorType &src) const {
+    void (SP3Operator<dim, number>::*face_operation)(const MatrixFree<dim, number> &, BlockVectorType &, const BlockVectorType &, const std::pair<unsigned int, unsigned int> &) const = use_interior_face_terms ? &SP3Operator<dim, number>::apply_face_T : nullptr;
+    const auto face_access = use_interior_face_terms ? MatrixFree<dim, number>::DataAccessOnFaces::gradients : MatrixFree<dim, number>::DataAccessOnFaces::none;
+
     data->loop(
       &SP3Operator::apply_cell,
-      &SP3Operator::apply_face_T,
+      face_operation,
       &SP3Operator::apply_boundary,
       this,
       dst,
       src,
       true, // Set dst to zero
-      MatrixFree<dim, number>::DataAccessOnFaces::gradients,
-      MatrixFree<dim, number>::DataAccessOnFaces::gradients
+      face_access,
+      face_access
     );
   }
 
 
   template <unsigned int dim, typename number>
   void SP3Operator<dim, number>::Tvmult_add(BlockVectorType &dst, const BlockVectorType &src) const {
+    void (SP3Operator<dim, number>::*face_operation)(const MatrixFree<dim, number> &, BlockVectorType &, const BlockVectorType &, const std::pair<unsigned int, unsigned int> &) const = use_interior_face_terms ? &SP3Operator<dim, number>::apply_face_T : nullptr;
+    const auto face_access = use_interior_face_terms ? MatrixFree<dim, number>::DataAccessOnFaces::gradients : MatrixFree<dim, number>::DataAccessOnFaces::none;
+
     data->loop(
       &SP3Operator::apply_cell,
-      &SP3Operator::apply_face_T,
+      face_operation,
       &SP3Operator::apply_boundary,
       this,
       dst,
       src,
       false, // Do not set dst to zero
-      MatrixFree<dim, number>::DataAccessOnFaces::gradients,
-      MatrixFree<dim, number>::DataAccessOnFaces::gradients
+      face_access,
+      face_access
     );
   }
 
@@ -518,7 +530,7 @@ namespace solver {
     using BoundaryOperation = std::function<void(FEFaceEval &)>;
 
     FaceOperation face_operation;
-    if (dst_mode == src_mode)
+    if (use_interior_face_terms && dst_mode == src_mode)
       face_operation = [this, dst_mode](FEFaceEval &phi_inner, FEFaceEval &phi_outer) {
         integrate_face_block(phi_inner, phi_outer, dst_mode);
       };
@@ -539,23 +551,20 @@ namespace solver {
 
 
   template <unsigned int dim, typename number>
-  void SP3Operator<dim, number>::compute_scalar_matrix(TrilinosWrappers::SparseMatrix &matrix, const unsigned int dst_mode, const unsigned int src_mode) const {
-    AffineConstraints<number> dummy;
-    dummy.close();
-
+  void SP3Operator<dim, number>::compute_scalar_matrix(TrilinosWrappers::SparseMatrix &matrix, const unsigned int dst_mode, const unsigned int src_mode, const AffineConstraints<number> &constraints) const {
     using CellOperation = std::function<void(FEEval &)>;
     using FaceOperation = std::function<void(FEFaceEval &, FEFaceEval &)>;
     using BoundaryOperation = std::function<void(FEFaceEval &)>;
 
     FaceOperation face_operation;
-    if (dst_mode == src_mode)
+    if (use_interior_face_terms && dst_mode == src_mode)
       face_operation = [this, dst_mode](FEFaceEval &phi_inner, FEFaceEval &phi_outer) {
         integrate_face_block(phi_inner, phi_outer, dst_mode);
       };
 
     MatrixFreeTools::compute_matrix(
       *data,
-      dummy,
+      constraints,
       matrix,
       CellOperation([this, dst_mode, src_mode](FEEval &phi) { integrate_cell_block(phi, dst_mode, src_mode); }),
       face_operation,
@@ -595,24 +604,27 @@ namespace solver {
 
 
   template <unsigned int dim, typename number>
-  void SP3Operator<dim, number>::compute_matrix_on_active_dofs(const DoFHandler<dim> &dof_handler, TrilinosWrappers::SparseMatrix &matrix) const {
+  void SP3Operator<dim, number>::compute_matrix_on_active_dofs(const DoFHandler<dim> &dof_handler, TrilinosWrappers::SparseMatrix &matrix, const AffineConstraints<number> &constraints) const {
     const IndexSet locally_owned_scalar_dofs = dof_handler.locally_owned_dofs();
     const types::global_dof_index scalar_size = dof_handler.n_dofs();
 
-    TrilinosWrappers::SparsityPattern flux_sparsity(locally_owned_scalar_dofs, MPI_COMM_WORLD);
-    DoFTools::make_flux_sparsity_pattern(dof_handler, flux_sparsity);
-    flux_sparsity.compress();
+    TrilinosWrappers::SparsityPattern diagonal_sparsity(locally_owned_scalar_dofs, MPI_COMM_WORLD);
+    if (use_interior_face_terms)
+      DoFTools::make_flux_sparsity_pattern(dof_handler, diagonal_sparsity, constraints);
+    else
+      DoFTools::make_sparsity_pattern(dof_handler, diagonal_sparsity, constraints);
+    diagonal_sparsity.compress();
 
-    TrilinosWrappers::SparsityPattern cell_sparsity(locally_owned_scalar_dofs, MPI_COMM_WORLD);
-    DoFTools::make_sparsity_pattern(dof_handler, cell_sparsity);
-    cell_sparsity.compress();
+    TrilinosWrappers::SparsityPattern offdiagonal_sparsity(locally_owned_scalar_dofs, MPI_COMM_WORLD);
+    DoFTools::make_sparsity_pattern(dof_handler, offdiagonal_sparsity, constraints);
+    offdiagonal_sparsity.compress();
 
     IndexSet locally_owned_block_dofs(2 * scalar_size);
     locally_owned_block_dofs.add_indices(locally_owned_scalar_dofs);
     locally_owned_block_dofs.add_indices(locally_owned_scalar_dofs, scalar_size);
     locally_owned_block_dofs.compress();
 
-    TrilinosWrappers::SparsityPattern block_sparsity(locally_owned_block_dofs, MPI_COMM_WORLD, flux_sparsity.max_entries_per_row() + cell_sparsity.max_entries_per_row());
+    TrilinosWrappers::SparsityPattern block_sparsity(locally_owned_block_dofs, MPI_COMM_WORLD, diagonal_sparsity.max_entries_per_row() + offdiagonal_sparsity.max_entries_per_row());
 
     const auto add_sparsity_block = [&](
       const TrilinosWrappers::SparsityPattern &scalar_sparsity,
@@ -640,10 +652,10 @@ namespace solver {
       }
     };
 
-    add_sparsity_block(flux_sparsity, 0, 0);
-    add_sparsity_block(flux_sparsity, scalar_size, scalar_size);
-    add_sparsity_block(cell_sparsity, 0, scalar_size);
-    add_sparsity_block(cell_sparsity, scalar_size, 0);
+    add_sparsity_block(diagonal_sparsity, 0, 0);
+    add_sparsity_block(diagonal_sparsity, scalar_size, scalar_size);
+    add_sparsity_block(offdiagonal_sparsity, 0, scalar_size);
+    add_sparsity_block(offdiagonal_sparsity, scalar_size, 0);
     block_sparsity.compress();
 
     matrix.reinit(block_sparsity);
@@ -685,28 +697,28 @@ namespace solver {
     };
 
     {
-      TrilinosWrappers::SparseMatrix flux_block;
-      flux_block.reinit(flux_sparsity);
+      TrilinosWrappers::SparseMatrix diagonal_block;
+      diagonal_block.reinit(diagonal_sparsity);
 
-      compute_scalar_matrix(flux_block, 0, 0);
-      flux_block.compress(VectorOperation::add);
-      add_matrix_block(flux_block, 0, 0);
+      compute_scalar_matrix(diagonal_block, 0, 0, constraints);
+      diagonal_block.compress(VectorOperation::add);
+      add_matrix_block(diagonal_block, 0, 0);
 
-      flux_block = 0.0;
+      diagonal_block = 0.0;
 
-      compute_scalar_matrix(flux_block, 1, 1);
-      flux_block.compress(VectorOperation::add);
-      add_matrix_block(flux_block, scalar_size, scalar_size);
+      compute_scalar_matrix(diagonal_block, 1, 1, constraints);
+      diagonal_block.compress(VectorOperation::add);
+      add_matrix_block(diagonal_block, scalar_size, scalar_size);
     }
 
     {
-      TrilinosWrappers::SparseMatrix cell_block;
-      cell_block.reinit(cell_sparsity);
+      TrilinosWrappers::SparseMatrix offdiagonal_block;
+      offdiagonal_block.reinit(offdiagonal_sparsity);
 
-      compute_scalar_matrix(cell_block, 0, 1);
-      cell_block.compress(VectorOperation::add);
-      add_matrix_block(cell_block, 0, scalar_size);
-      add_matrix_block(cell_block, scalar_size, 0);
+      compute_scalar_matrix(offdiagonal_block, 0, 1, constraints);
+      offdiagonal_block.compress(VectorOperation::add);
+      add_matrix_block(offdiagonal_block, 0, scalar_size);
+      add_matrix_block(offdiagonal_block, scalar_size, 0);
     }
 
     matrix.compress(VectorOperation::add);
@@ -714,24 +726,27 @@ namespace solver {
 
 
   template <unsigned int dim, typename number> // TODO remove?
-  void SP3Operator<dim, number>::compute_matrix(const DoFHandler<dim> &dof_handler, TrilinosWrappers::SparseMatrix &matrix) const {
+  void SP3Operator<dim, number>::compute_matrix(const DoFHandler<dim> &dof_handler, TrilinosWrappers::SparseMatrix &matrix, const AffineConstraints<number> &constraints) const {
     const IndexSet locally_owned_scalar_dofs = dof_handler.locally_owned_mg_dofs(0);
     const types::global_dof_index scalar_size = dof_handler.n_dofs(0);
 
-    TrilinosWrappers::SparsityPattern flux_sparsity(locally_owned_scalar_dofs, MPI_COMM_WORLD);
-    MGTools::make_flux_sparsity_pattern(dof_handler, flux_sparsity, 0);
-    flux_sparsity.compress();
+    TrilinosWrappers::SparsityPattern diagonal_sparsity(locally_owned_scalar_dofs, MPI_COMM_WORLD);
+    if (use_interior_face_terms)
+      MGTools::make_flux_sparsity_pattern(dof_handler, diagonal_sparsity, 0, constraints);
+    else
+      MGTools::make_sparsity_pattern(dof_handler, diagonal_sparsity, 0, constraints);
+    diagonal_sparsity.compress();
 
-    TrilinosWrappers::SparsityPattern cell_sparsity(locally_owned_scalar_dofs, MPI_COMM_WORLD);
-    MGTools::make_sparsity_pattern(dof_handler, cell_sparsity, 0);
-    cell_sparsity.compress();
+    TrilinosWrappers::SparsityPattern offdiagonal_sparsity(locally_owned_scalar_dofs, MPI_COMM_WORLD);
+    MGTools::make_sparsity_pattern(dof_handler, offdiagonal_sparsity, 0, constraints);
+    offdiagonal_sparsity.compress();
 
     IndexSet locally_owned_block_dofs(2 * scalar_size);
     locally_owned_block_dofs.add_indices(locally_owned_scalar_dofs);
     locally_owned_block_dofs.add_indices(locally_owned_scalar_dofs, scalar_size);
     locally_owned_block_dofs.compress();
 
-    TrilinosWrappers::SparsityPattern block_sparsity(locally_owned_block_dofs, MPI_COMM_WORLD, flux_sparsity.max_entries_per_row() + cell_sparsity.max_entries_per_row());
+    TrilinosWrappers::SparsityPattern block_sparsity(locally_owned_block_dofs, MPI_COMM_WORLD, diagonal_sparsity.max_entries_per_row() + offdiagonal_sparsity.max_entries_per_row());
 
     const auto add_sparsity_block = [&](
       const TrilinosWrappers::SparsityPattern &scalar_sparsity,
@@ -759,10 +774,10 @@ namespace solver {
       }
     };
    
-    add_sparsity_block(flux_sparsity, 0, 0);
-    add_sparsity_block(flux_sparsity, scalar_size, scalar_size);
-    add_sparsity_block(cell_sparsity, 0, scalar_size);
-    add_sparsity_block(cell_sparsity, scalar_size, 0);
+    add_sparsity_block(diagonal_sparsity, 0, 0);
+    add_sparsity_block(diagonal_sparsity, scalar_size, scalar_size);
+    add_sparsity_block(offdiagonal_sparsity, 0, scalar_size);
+    add_sparsity_block(offdiagonal_sparsity, scalar_size, 0);
     block_sparsity.compress();
 
     matrix.reinit(block_sparsity);
@@ -804,28 +819,28 @@ namespace solver {
     };
 
     {
-      TrilinosWrappers::SparseMatrix flux_block;
-      flux_block.reinit(flux_sparsity);
+      TrilinosWrappers::SparseMatrix diagonal_block;
+      diagonal_block.reinit(diagonal_sparsity);
 
-      compute_scalar_matrix(flux_block, 0, 0);
-      flux_block.compress(VectorOperation::add);
-      add_matrix_block(flux_block, 0, 0);
+      compute_scalar_matrix(diagonal_block, 0, 0, constraints);
+      diagonal_block.compress(VectorOperation::add);
+      add_matrix_block(diagonal_block, 0, 0);
 
-      flux_block = 0.0;
+      diagonal_block = 0.0;
 
-      compute_scalar_matrix(flux_block, 1, 1);
-      flux_block.compress(VectorOperation::add);
-      add_matrix_block(flux_block, scalar_size, scalar_size);
+      compute_scalar_matrix(diagonal_block, 1, 1, constraints);
+      diagonal_block.compress(VectorOperation::add);
+      add_matrix_block(diagonal_block, scalar_size, scalar_size);
     }
 
     {
-      TrilinosWrappers::SparseMatrix cell_block;
-      cell_block.reinit(cell_sparsity);
+      TrilinosWrappers::SparseMatrix offdiagonal_block;
+      offdiagonal_block.reinit(offdiagonal_sparsity);
   
-      compute_scalar_matrix(cell_block, 0, 1);
-      cell_block.compress(VectorOperation::add);
-      add_matrix_block(cell_block, 0, scalar_size);
-      add_matrix_block(cell_block, scalar_size, 0);
+      compute_scalar_matrix(offdiagonal_block, 0, 1, constraints);
+      offdiagonal_block.compress(VectorOperation::add);
+      add_matrix_block(offdiagonal_block, 0, scalar_size);
+      add_matrix_block(offdiagonal_block, scalar_size, 0);
     }
 
     matrix.compress(VectorOperation::add);

@@ -10,6 +10,7 @@
 
 #include <deal.II/lac/trilinos_sparse_matrix.h>
 #include <deal.II/lac/diagonal_matrix.h>
+#include <deal.II/lac/affine_constraints.h>
 
 #include <deal.II/matrix_free/fe_evaluation.h>
 #include <deal.II/matrix_free/matrix_free.h>
@@ -26,11 +27,12 @@ namespace solver {
   public:
     using VectorType = dealii::LinearAlgebra::distributed::Vector<number>;
 
-    ZeroModeOperator(const unsigned int p_degree, const unsigned int dof_index, const unsigned int group, const data::GeometryData &geom_data) :
+    ZeroModeOperator(const unsigned int p_degree, const unsigned int dof_index, const unsigned int group, const data::GeometryData &geom_data, const bool use_interior_face_terms) :
       p_degree(p_degree),
       dof_index(dof_index),
       energy_group(group),
       geometry_data(geom_data),
+      use_interior_face_terms(use_interior_face_terms),
       diagonal_is_up_to_date(false)
     {};
 
@@ -47,10 +49,11 @@ namespace solver {
     void Tvmult(VectorType &, const VectorType &) const;
     void Tvmult_add(VectorType &, const VectorType &) const;
     
-    void compute_matrix(dealii::TrilinosWrappers::SparseMatrix &) const;
+    void compute_matrix(dealii::TrilinosWrappers::SparseMatrix &, const dealii::AffineConstraints<number> &) const;
     void compute_diagonal();
     std::shared_ptr<dealii::DiagonalMatrix<VectorType>> get_matrix_diagonal_inverse() const;
-
+    
+    bool uses_interior_face_terms() const { return use_interior_face_terms; }
 
   private:
     number get_penalty_factor() const;
@@ -71,6 +74,7 @@ namespace solver {
     const unsigned int energy_group;
 
     const data::GeometryData &geometry_data;
+    const bool use_interior_face_terms;
 
     dealii::AlignedVector<dealii::VectorizedArray<number>> diff_coef;
     dealii::AlignedVector<dealii::VectorizedArray<number>> sigma_rem;

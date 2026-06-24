@@ -83,32 +83,38 @@ namespace solver {
 
   template <unsigned int dim, typename number>
   void SecondModeOperator<dim, number>::vmult(VectorType &dst, const VectorType &src) const {
+    void (SecondModeOperator<dim, number>::*face_operation)(const MatrixFree<dim, number> &, VectorType &, const VectorType &, const std::pair<unsigned int, unsigned int> &) const = use_interior_face_terms ? &SecondModeOperator<dim, number>::apply_face : nullptr;
+    const auto face_access = use_interior_face_terms ? MatrixFree<dim, number>::DataAccessOnFaces::gradients : MatrixFree<dim, number>::DataAccessOnFaces::none;
+
     data->loop(
       &SecondModeOperator::apply_cell,
-      &SecondModeOperator::apply_face,
+      face_operation,
       &SecondModeOperator::apply_boundary,
       this,
       dst,
       src,
       true, // Set dst to zero
-      MatrixFree<dim, number>::DataAccessOnFaces::gradients,
-      MatrixFree<dim, number>::DataAccessOnFaces::gradients
+      face_access,
+      face_access
     );
   }
 
 
   template <unsigned int dim, typename number>
   void SecondModeOperator<dim, number>::vmult_add(VectorType &dst, const VectorType &src) const {
+    void (SecondModeOperator<dim, number>::*face_operation)(const MatrixFree<dim, number> &, VectorType &, const VectorType &, const std::pair<unsigned int, unsigned int> &) const = use_interior_face_terms ? &SecondModeOperator<dim, number>::apply_face : nullptr;
+    const auto face_access = use_interior_face_terms ? MatrixFree<dim, number>::DataAccessOnFaces::gradients : MatrixFree<dim, number>::DataAccessOnFaces::none;
+
     data->loop(
       &SecondModeOperator::apply_cell,
-      &SecondModeOperator::apply_face,
+      face_operation,
       &SecondModeOperator::apply_boundary,
       this,
       dst,
       src,
       false, // Set dst to zero
-      MatrixFree<dim, number>::DataAccessOnFaces::gradients,
-      MatrixFree<dim, number>::DataAccessOnFaces::gradients
+      face_access,
+      face_access
     );
   }
 
@@ -262,16 +268,15 @@ namespace solver {
 
 
   template <unsigned int dim, typename number>
-  void SecondModeOperator<dim, number>::compute_matrix(TrilinosWrappers::SparseMatrix &matrix) const {
-    AffineConstraints<number> dummy;
-    dummy.close();
+  void SecondModeOperator<dim, number>::compute_matrix(TrilinosWrappers::SparseMatrix &matrix, const AffineConstraints<number> &constraints) const {
+    void (SecondModeOperator<dim, number>::*face_operation)(FEFaceEval &, FEFaceEval &) const = use_interior_face_terms ? &SecondModeOperator<dim, number>::integrate_face_physics : nullptr;
     
     MatrixFreeTools::compute_matrix(
       *data,
-      dummy,
+      constraints,
       matrix,
       &SecondModeOperator::integrate_cell_physics,
-      &SecondModeOperator::integrate_face_physics,
+      face_operation,
       &SecondModeOperator::integrate_boundary_physics,
       this,
       dof_index,
@@ -294,12 +299,14 @@ namespace solver {
 
     VectorType &inverse_diagonal_vector = inverse_diagonal->get_vector();
     inverse_diagonal_vector = 0.0;
+
+    void (SecondModeOperator<dim, number>::*face_operation)(FEFaceEval &, FEFaceEval &) const = use_interior_face_terms ? &SecondModeOperator<dim, number>::integrate_face_physics : nullptr;
     
     MatrixFreeTools::compute_diagonal(
       *data, 
       inverse_diagonal_vector,
       &SecondModeOperator::integrate_cell_physics,
-      &SecondModeOperator::integrate_face_physics,
+      face_operation,
       &SecondModeOperator::integrate_boundary_physics,
       this,
       dof_index,

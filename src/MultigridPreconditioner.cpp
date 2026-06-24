@@ -45,7 +45,7 @@ namespace solver {
     typename TransferType,
     typename SmootherPreconditionerType,
     typename CoarseWrapperType>
-  void MultigridPreconditioner<dim, number, OperatorType, VectorType, TransferType, SmootherPreconditionerType, CoarseWrapperType>::initialize(const DoFHandler<dim> &dof_handler, const std::vector<std::shared_ptr<OperatorType>> &level_operators, const std::vector<std::shared_ptr<DoFHandler<dim>>> &level_dof_handlers, std::shared_ptr<TransferType> mg_transfer, const CoarseSolverPolicy &coarse_solver_policy) {
+  void MultigridPreconditioner<dim, number, OperatorType, VectorType, TransferType, SmootherPreconditionerType, CoarseWrapperType>::initialize(const DoFHandler<dim> &dof_handler, const std::vector<std::shared_ptr<OperatorType>> &level_operators, const std::vector<std::shared_ptr<DoFHandler<dim>>> &level_dof_handlers, std::shared_ptr<TransferType> mg_transfer, const AffineConstraints<number> &coarse_constraints, const CoarseSolverPolicy &coarse_solver_policy) {
     clear();
 
     this->transfer = mg_transfer;
@@ -80,7 +80,7 @@ namespace solver {
     {
       TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::Setup::Multigrid::CoarseMatrix");
       coarse_matrix = std::make_unique<TrilinosWrappers::SparseMatrix>();
-      CoarseMatrixBuilder<dim, number, OperatorType>::build(*this->level_dof_handlers[0], *level_operators[0], *coarse_matrix);
+      CoarseMatrixBuilder<dim, number, OperatorType>::build(*this->level_dof_handlers[0], *level_operators[0], *coarse_matrix, coarse_constraints);
     }
 
     // Initialize direct solver

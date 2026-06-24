@@ -266,10 +266,12 @@ namespace solver {
 
     // Setup and collect all dof handlers and quadratures
     std::vector<const DoFHandler<dim>*> all_dof_handlers;
+    std::vector<const AffineConstraints<double>*> all_constraints;
     std::vector<QGauss<1>> all_quadratures;
     for (const auto &group : energy_groups) {
       group->setup_dofs();
       all_dof_handlers.push_back(&(group->get_dof_handler()));
+      all_constraints.push_back(&(group->get_constraints()));
       all_quadratures.push_back(QGauss<1>(group->get_degree() + 1));
     }
 
@@ -278,16 +280,8 @@ namespace solver {
     else
       mf_storage->clear();
 
-    AffineConstraints<double> empty_constraints;
-    empty_constraints.close();
-    std::vector<const AffineConstraints<double>*> all_constraints(all_dof_handlers.size(), &empty_constraints);
-  
     // Setup the mf storage with complete dof handlers
-    typename MatrixFree<dim, double>::AdditionalData additional_data;
-    additional_data.tasks_parallel_scheme = MatrixFree<dim, double>::AdditionalData::none;
-    additional_data.mapping_update_flags = (update_values | update_gradients | update_JxW_values);
-    additional_data.mapping_update_flags_inner_faces = (update_values | update_gradients | update_JxW_values | update_normal_vectors | update_inverse_jacobians);
-    additional_data.mapping_update_flags_boundary_faces = (update_values | update_JxW_values);
+    const auto additional_data = fe_discretization::make_matrix_free_additional_data<dim, double>(fe_discretization::uses_interior_face_terms(parameters));
     
     mf_storage->reinit(mapping, all_dof_handlers, all_constraints, all_quadratures, additional_data);
 

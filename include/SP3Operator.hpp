@@ -13,6 +13,7 @@
 
 #include <deal.II/lac/la_parallel_block_vector.h>
 #include <deal.II/lac/la_parallel_vector.h>
+#include <deal.II/lac/affine_constraints.h>
 #include <deal.II/lac/trilinos_sparse_matrix.h>
 #include <deal.II/matrix_free/fe_evaluation.h>
 #include <deal.II/matrix_free/matrix_free.h>
@@ -30,11 +31,12 @@ namespace solver {
     using BlockVectorType = dealii::LinearAlgebra::distributed::BlockVector<number>;
     using DiagonalPreconditionerType = BlockDiagonalPreconditioner<number>;
 
-    SP3Operator(const unsigned int p_degree, const unsigned int dof_index, const unsigned int group, const data::GeometryData &geom_data) :
+    SP3Operator(const unsigned int p_degree, const unsigned int dof_index, const unsigned int group, const data::GeometryData &geom_data, const bool use_interior_face_terms) :
       p_degree(p_degree),
       dof_index(dof_index),
       energy_group(group),
       geometry_data(geom_data),
+      use_interior_face_terms(use_interior_face_terms),
       diagonal_is_up_to_date(false)
     {};
 
@@ -53,8 +55,12 @@ namespace solver {
 
     void compute_diagonal();
     std::shared_ptr<DiagonalPreconditionerType> get_matrix_diagonal_inverse() const;
-    void compute_matrix(const dealii::DoFHandler<dim> &, dealii::TrilinosWrappers::SparseMatrix &) const;
-    void compute_matrix_on_active_dofs(const dealii::DoFHandler<dim> &, dealii::TrilinosWrappers::SparseMatrix &) const;
+
+    void compute_matrix(const dealii::DoFHandler<dim> &, dealii::TrilinosWrappers::SparseMatrix &, const dealii::AffineConstraints<number> &) const;
+    void compute_matrix_on_active_dofs(const dealii::DoFHandler<dim> &, dealii::TrilinosWrappers::SparseMatrix &, const dealii::AffineConstraints<number> &) const;
+
+    bool uses_interior_face_terms() const { return use_interior_face_terms; }
+
 
 
   private:
@@ -71,7 +77,7 @@ namespace solver {
     void integrate_face_block(FEFaceEval &, FEFaceEval &, const unsigned int) const;
     void integrate_boundary_block(FEFaceEval &, const unsigned int, const unsigned int) const;
     void compute_scalar_diagonal(VectorType &, const unsigned int, const unsigned int) const;
-    void compute_scalar_matrix(dealii::TrilinosWrappers::SparseMatrix &, const unsigned int, const unsigned int) const;
+    void compute_scalar_matrix(dealii::TrilinosWrappers::SparseMatrix &, const unsigned int, const unsigned int, const dealii::AffineConstraints<number> &) const;
   
     std::shared_ptr<const dealii::MatrixFree<dim, number>> data;
 
@@ -80,6 +86,7 @@ namespace solver {
     const unsigned int energy_group;
 
     const data::GeometryData &geometry_data;
+    const bool use_interior_face_terms;
 
     dealii::AlignedVector<dealii::VectorizedArray<number>> diff_coef;
     dealii::AlignedVector<dealii::VectorizedArray<number>> sigma_rem;
