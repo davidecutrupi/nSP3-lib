@@ -7,6 +7,9 @@ set Power Quantity = fission source
 
 set Refinement cycles = 2
 set Max polynomial degree = 5
+set Thermal group count = 2
+set Thermal max polynomial degree = 2
+set P refinement threshold fraction = 0.5
 set Spatial Refinement Type = global
 
 subsection Eigenvalue solver

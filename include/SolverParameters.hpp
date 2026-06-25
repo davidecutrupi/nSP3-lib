@@ -32,6 +32,9 @@ namespace solver {
 
     unsigned int n_cycles = 2;
     unsigned int max_p_degree = 5;
+    unsigned int thermal_group_count = 2;
+    unsigned int thermal_max_p_degree = 2;
+    double p_refinement_threshold_fraction = 0.5;
 
     unsigned int eigen_max_iterations = 500;
     double eigen_tolerance = 1e-8;
@@ -56,7 +59,10 @@ namespace solver {
       
       prm.declare_entry("Refinement cycles", std::to_string(n_cycles), dealii::Patterns::Integer(1), "Number of solve/adapt cycles.");
       prm.declare_entry("Max polynomial degree", std::to_string(max_p_degree), dealii::Patterns::Integer(1), "Maximum group-global p degree used by adaptive p-refinement.");
-      prm.declare_entry("Spatial Refinement Type", h_ref_type, dealii::Patterns::Selection("global|adaptive|none"), "Type of spatial refinement: adaptive, global.");
+      prm.declare_entry("Thermal group count", std::to_string(thermal_group_count), dealii::Patterns::Integer(0), "Number of highest-index energy groups treated as thermal for h-refinement targeting and p-degree limiting.");
+      prm.declare_entry("Thermal max polynomial degree", std::to_string(thermal_max_p_degree), dealii::Patterns::Integer(1), "Maximum p degree allowed for thermal groups.");
+      prm.declare_entry("P refinement threshold fraction", std::to_string(p_refinement_threshold_fraction), dealii::Patterns::Double(0.0), "Base fraction of the maximum group error used by group-wise p-refinement thresholds.");
+      prm.declare_entry("Spatial Refinement Type", h_ref_type, dealii::Patterns::Selection("global|adaptive|goal|none"), "Type of spatial refinement: none, global, adaptive primal Kelly, or goal-oriented primal-dual Kelly.");
 
       prm.enter_subsection("Eigenvalue solver");
       prm.declare_entry("Max iterations", std::to_string(eigen_max_iterations), dealii::Patterns::Integer(1), "Maximum outer eigenvalue iterations.");
@@ -85,6 +91,9 @@ namespace solver {
       
       n_cycles = static_cast<unsigned int>(prm.get_integer("Refinement cycles"));
       max_p_degree = static_cast<unsigned int>(prm.get_integer("Max polynomial degree"));
+      thermal_group_count = static_cast<unsigned int>(prm.get_integer("Thermal group count"));
+      thermal_max_p_degree = static_cast<unsigned int>(prm.get_integer("Thermal max polynomial degree"));
+      p_refinement_threshold_fraction = prm.get_double("P refinement threshold fraction");
       h_ref_type = prm.get("Spatial Refinement Type");
 
       prm.enter_subsection("Eigenvalue solver");
@@ -110,6 +119,7 @@ namespace solver {
       if (output_directory.empty()) output_directory = ".";
       if (fe_type != "DG" && fe_type != "CG") throw std::runtime_error("SolverParameters: FE type must be either DG or CG.");
       if (power_quantity != "fission source" && power_quantity != "fission rate") throw std::runtime_error("SolverParameters: Power Quantity must be either 'fission source' or 'fission rate'.");
+      if (h_ref_type != "global" && h_ref_type != "adaptive" && h_ref_type != "goal" && h_ref_type != "none") throw std::runtime_error("SolverParameters: Spatial Refinement Type must be one of 'global', 'adaptive', 'goal', or 'none'.");
 
       if (coarse_p_coarsening_sequence_string == "bisect") coarse_p_coarsening_sequence = dealii::MGTransferGlobalCoarseningTools::PolynomialCoarseningSequenceType::bisect;
       else if (coarse_p_coarsening_sequence_string == "decrease_by_one") coarse_p_coarsening_sequence = dealii::MGTransferGlobalCoarseningTools::PolynomialCoarseningSequenceType::decrease_by_one;

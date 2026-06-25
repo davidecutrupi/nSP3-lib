@@ -358,11 +358,14 @@ namespace solver {
   }
 
 
-  void NeutronSolver::compute_weighted_error(ErrorEstimates &estimates) const {
+  void NeutronSolver::compute_weighted_error(ErrorEstimates &estimates, const bool use_goal_oriented_estimator) const {
     TimerOutput::Scope t(GlobalTimer::get(), "NeutronSolver::EstimateError");
 
     estimates.global_group_errors.resize(energy_groups.size(), 0.0);
     estimates.h_refinement_estimators.reinit(triangulation->n_active_cells());
+
+    const unsigned int n_thermal_groups = std::min(parameters.thermal_group_count, static_cast<unsigned int>(energy_groups.size()));
+    const unsigned int first_thermal_group = static_cast<unsigned int>(energy_groups.size()) - n_thermal_groups;
 
     for (unsigned int g = 0; g < energy_groups.size(); ++g) {
       auto &group = energy_groups[g];
@@ -382,12 +385,6 @@ namespace solver {
       relevant_diffusion.copy_locally_owned_data_from(group->get_solution().block(0));
       relevant_diffusion.update_ghost_values();
 
-      // Get the locally relevant adjoint solution of the zero mode
-      LinearAlgebra::distributed::Vector<double> relevant_adjoint_diffusion;
-      relevant_adjoint_diffusion.reinit(locally_owned_dofs, locally_relevant_dofs, MPI_COMM_WORLD);
-      relevant_adjoint_diffusion = group->get_adjoint_solution().block(0);
-      relevant_adjoint_diffusion.update_ghost_values();
-
       KellyErrorEstimator<dim>::estimate(
         group->get_dof_handler(),
         face_quadrature,
@@ -396,24 +393,30 @@ namespace solver {
         primal_kelly
       );
 
-      /* KellyErrorEstimator<dim>::estimate(
-        group->get_dof_handler(),
-        face_quadrature,
-        {},
-        relevant_adjoint_diffusion,
-        dual_kelly
-      ); */
+      if (use_goal_oriented_estimator) {
+        LinearAlgebra::distributed::Vector<double> relevant_adjoint_diffusion;
+        relevant_adjoint_diffusion.reinit(locally_owned_dofs, locally_relevant_dofs, MPI_COMM_WORLD);
+        relevant_adjoint_diffusion.copy_locally_owned_data_from(group->get_adjoint_solution().block(0));
+        relevant_adjoint_diffusion.update_ghost_values();
+
+        KellyErrorEstimator<dim>::estimate(
+          group->get_dof_handler(),
+          face_quadrature,
+          {},
+          relevant_adjoint_diffusion,
+          dual_kelly
+        );
+      }
 
       float local_group_error_sum = 0.0;
       for (const auto &cell : triangulation->active_cell_iterators()) {
         if (cell->is_locally_owned()) {
           const unsigned int index = cell->active_cell_index();
-          float goal_oriented_cell_error = primal_kelly(index); // * dual_kelly(index);
-          local_group_error_sum += goal_oriented_cell_error;
+          const float cell_error = use_goal_oriented_estimator ? primal_kelly(index) * dual_kelly(index) : primal_kelly(index);
+          local_group_error_sum += cell_error;
 
-          // h refinement if the group is thermic (most 2 thermic groups)
-          if (g >= energy_groups.size() - 2) // TODO parametric number + goal
-            estimates.h_refinement_estimators(index) += goal_oriented_cell_error;
+          if (use_goal_oriented_estimator || g >= first_thermal_group)
+            estimates.h_refinement_estimators(index) += cell_error;
         }
       }
       
@@ -613,19 +616,21 @@ namespace solver {
 
       // Cycles are finished, we don't need more refinement
       if (cycle == n_cycles - 1) break; 
-    
+  
+      const bool use_goal_oriented_refinement = parameters.h_ref_type == "goal";
+
       // Solve adjoint problem
-      /* {
+      if (use_goal_oriented_refinement) {
         TimerOutput::Scope t(GlobalTimer::get(), "NeutronSolver::Solve::adjoint");
         solve_eigenvalue_problem(true);
-      } */
+      }
 
       // Estimate errors
       ErrorEstimates errors;
-      compute_weighted_error(errors);
+      compute_weighted_error(errors, use_goal_oriented_refinement);
 
       // h-refinement set flags
-      if (parameters.h_ref_type == "adaptive") {
+      if (parameters.h_ref_type == "adaptive" || use_goal_oriented_refinement) {
         parallel::distributed::GridRefinement::refine_and_coarsen_fixed_fraction(
           *triangulation,
           errors.h_refinement_estimators,
@@ -643,15 +648,23 @@ namespace solver {
 
       triangulation->execute_coarsening_and_refinement();
 
+      const unsigned int n_thermal_groups = std::min(parameters.thermal_group_count, static_cast<unsigned int>(energy_groups.size()));
+      const unsigned int first_thermal_group = static_cast<unsigned int>(energy_groups.size()) - n_thermal_groups;
+
       // h-refinement and p-refinement evaluation
       float max_error = *std::max_element(errors.global_group_errors.begin(), errors.global_group_errors.end());
       for (unsigned int g = 0; g < energy_groups.size(); ++g) {
         energy_groups[g]->execute_h_transfer();
 
-        float threshold = 0.5f * static_cast<float>(std::pow((g + 1.0) / (energy_groups.size() + 1.0), 1.0)) * max_error;
-        pcout << "Group " << g << " Adjoint-Weighted Error: " << errors.global_group_errors[g] << " | Threshold: " << threshold << std::endl;
+        const bool is_thermal_group = g >= first_thermal_group;
+        const unsigned int group_max_p_degree = is_thermal_group ? parameters.thermal_max_p_degree : parameters.max_p_degree;
         
-        if (errors.global_group_errors[g] > threshold && energy_groups[g]->get_degree() < parameters.max_p_degree) {
+        const float threshold = static_cast<float>(parameters.p_refinement_threshold_fraction * ((g + 1.0) / (energy_groups.size() + 1.0))) * max_error;
+        pcout << "Group " << g << (use_goal_oriented_refinement ? " Goal-Oriented Error: " : " Error: ") << errors.global_group_errors[g]
+              << " | Threshold: " << threshold
+              << " | p-max: " << group_max_p_degree << std::endl;
+        
+        if (errors.global_group_errors[g] > threshold && energy_groups[g]->get_degree() < group_max_p_degree) {
           pcout << "  -> Increasing p-degree to " << energy_groups[g]->get_degree() + 1 << std::endl;
           energy_groups[g]->set_degree(energy_groups[g]->get_degree() + 1);
         }
