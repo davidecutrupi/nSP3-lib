@@ -378,7 +378,7 @@ namespace solver {
       // Get the locally relevant solution of the zero mode
       LinearAlgebra::distributed::Vector<double> relevant_diffusion;
       relevant_diffusion.reinit(locally_owned_dofs, locally_relevant_dofs, MPI_COMM_WORLD);
-      relevant_diffusion = group->get_solution().block(0);
+      relevant_diffusion.copy_locally_owned_data_from(group->get_solution().block(0));
       relevant_diffusion.update_ghost_values();
 
       // Get the locally relevant adjoint solution of the zero mode

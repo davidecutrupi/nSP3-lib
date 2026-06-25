@@ -670,12 +670,6 @@ namespace solver {
 
 
   template <unsigned int dim>
-  LinearAlgebra::distributed::BlockVector<double> EnergyGroup<dim>::get_solution() const { 
-    return solution;
-  }
-
-
-  template <unsigned int dim>
   LinearAlgebra::distributed::BlockVector<double> EnergyGroup<dim>::get_adjoint_solution() const { 
     return adjoint_solution;
   }

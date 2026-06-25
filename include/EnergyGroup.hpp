@@ -90,7 +90,8 @@ namespace solver {
     const dealii::DoFHandler<dim>& get_dof_handler() const { return dof_handler; }
     const dealii::AffineConstraints<double>& get_constraints() const { return constraints; }
 
-    BlockVectorType<double> get_solution() const;
+    BlockVectorType<double>& get_solution() { return solution; }
+    const BlockVectorType<double>& get_solution() const { return solution; }
     BlockVectorType<double> get_adjoint_solution() const;
 
 
