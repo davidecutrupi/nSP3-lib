@@ -2,6 +2,8 @@ set Benchmark = biblis
 set Output directory = ../out
 
 set FE type = DG
+set Output power distribution = true
+set Power Quantity = fission source
 
 set Refinement cycles = 2
 set Max polynomial degree = 5

@@ -66,6 +66,7 @@ namespace solver {
     void solve_eigenvalue_problem(bool);
     double get_total_fission_source(bool) const;
     void compute_weighted_error(ErrorEstimates &) const;
+    void write_power_distribution();
 
     const SolverParameters parameters;
     const data::MaterialData material_data;

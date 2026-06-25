@@ -2,6 +2,7 @@
 #include "GlobalTimer.hpp"
 
 #include <deal.II/base/index_set.h>
+#include <deal.II/base/mpi.h>
 #include <deal.II/base/quadrature_lib.h>
 
 #include <deal.II/dofs/dof_tools.h>
@@ -421,6 +422,155 @@ namespace solver {
   }
 
 
+  void NeutronSolver::write_power_distribution() {
+    TimerOutput::Scope t(GlobalTimer::get(), "NeutronSolver::Output::PinPower");
+
+    const unsigned int n_pin_cols = geometry_data.get_total_pin_cols();
+    const unsigned int n_pin_rows = geometry_data.get_total_pin_rows();
+    const unsigned int n_axial_layers = (dim == 3) ? geometry_data.get_core_n_assemblies_z() : 1;
+    const std::size_t n_total_pins = static_cast<std::size_t>(n_pin_cols) * n_pin_rows * n_axial_layers;
+
+    const bool use_sigma_f = parameters.power_quantity == "fission rate";
+
+    std::vector<double> local_pin_power(n_total_pins, 0.0);
+    std::vector<double> global_pin_power(n_total_pins, 0.0);
+
+    const auto flatten_pin = [n_pin_cols, n_pin_rows](
+      const unsigned int col,
+      const unsigned int row,
+      const unsigned int axial_layer
+    ) {
+      return (static_cast<std::size_t>(axial_layer) * n_pin_rows + row) * n_pin_cols + col;
+    };
+
+    const auto coordinate_to_pin_index = [](
+      const double coordinate,
+      const double pitch,
+      const unsigned int n_indices
+    ) {
+      int index = static_cast<int>(std::floor(coordinate / pitch));
+      if (index < 0)
+        return 0u;
+      if (static_cast<unsigned int>(index) >= n_indices)
+        return n_indices - 1;
+      return static_cast<unsigned int>(index);
+    };
+
+    for (unsigned int group = 0; group < energy_groups.size(); ++group) {
+      auto &solution = energy_groups[group]->get_solution();
+
+      solution.block(0).update_ghost_values();
+      solution.block(1).update_ghost_values();
+
+      FEEvaluation<dim, -1, 0, 1, double> phi0(*mf_storage, group, group);
+      FEEvaluation<dim, -1, 0, 1, double> phi2(*mf_storage, group, group);
+
+      for (unsigned int cell_batch = 0; cell_batch < mf_storage->n_cell_batches(); ++cell_batch) {
+        phi0.reinit(cell_batch);
+        phi2.reinit(cell_batch);
+
+        phi0.read_dof_values(solution.block(0));
+        phi2.read_dof_values(solution.block(1));
+
+        phi0.evaluate(EvaluationFlags::values);
+        phi2.evaluate(EvaluationFlags::values);
+
+        VectorizedArray<double> cell_integral(0.0);
+        for (const unsigned int q : phi0.quadrature_point_indices()) {
+          const VectorizedArray<double> real_flux = phi0.get_value(q) - (2.0 / 3.0) * phi2.get_value(q);
+          cell_integral += real_flux * phi0.JxW(q);
+        }
+
+        const unsigned int n_active_lanes = mf_storage->n_active_entries_per_cell_batch(cell_batch);
+        for (unsigned int lane = 0; lane < n_active_lanes; ++lane) {
+          const auto cell = mf_storage->get_cell_iterator(cell_batch, lane);
+          const Point<dim> center = cell->center();
+
+          const unsigned int global_pin_col = coordinate_to_pin_index(center[0], geometry_data.get_pin_pitch_x(), n_pin_cols);
+          unsigned int global_pin_row = 0;
+          unsigned int axial_layer = 0;
+
+          if constexpr (dim >= 2) {
+            const unsigned int physical_pin_row = coordinate_to_pin_index(center[1], geometry_data.get_pin_pitch_y(), n_pin_rows);
+            global_pin_row = (n_pin_rows - 1) - physical_pin_row;
+          }
+          if constexpr (dim == 3)
+            axial_layer = coordinate_to_pin_index(center[2], geometry_data.get_assembly_height(), n_axial_layers);
+
+          if (geometry_data.get_pin_material_id(global_pin_row, global_pin_col, axial_layer) == -1)
+            continue;
+
+          const std::size_t pin_index = flatten_pin(global_pin_col, global_pin_row, axial_layer);
+
+          const unsigned int material_id = cell->material_id();
+          const double power_coefficient = use_sigma_f ? material_data.get_sigma_f(material_id, group) : material_data.get_nu_sigma_f(material_id, group);
+          local_pin_power[pin_index] += power_coefficient * cell_integral[lane];
+        }
+      }
+
+      solution.block(0).zero_out_ghost_values();
+      solution.block(1).zero_out_ghost_values();
+    }
+
+    const int mpi_error = MPI_Allreduce(local_pin_power.data(), global_pin_power.data(), static_cast<int>(n_total_pins), MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    AssertThrow(mpi_error == MPI_SUCCESS, ExcMessage("Error in MPI_Allreduce while summing pin powers."));
+    if (mpi_rank != 0) return;
+
+    double nonzero_power_sum = 0.0;
+    unsigned int nonzero_power_count = 0;
+    for (unsigned int axial_layer = 0; axial_layer < n_axial_layers; ++axial_layer) {
+      for (unsigned int row = 0; row < n_pin_rows; ++row) {
+        for (unsigned int col = 0; col < n_pin_cols; ++col) {
+          const int material_id = geometry_data.get_pin_material_id(row, col, axial_layer);
+          if (material_id == -1)
+            continue;
+
+          const double raw_power = global_pin_power[flatten_pin(col, row, axial_layer)];
+          if (raw_power > 0.0) {
+            nonzero_power_sum += raw_power;
+            ++nonzero_power_count;
+          }
+        }
+      }
+    }
+    const double mean_nonzero_power = (nonzero_power_count > 0) ? nonzero_power_sum / nonzero_power_count : 0.0;
+
+    const bool needs_separator = !parameters.output_directory.empty() && parameters.output_directory.back() != '/';
+    const std::string output_path = parameters.output_directory + (needs_separator ? "/" : "") + parameters.benchmark + "-" + parameters.fe_type + "-power-distribution.csv";
+    std::ofstream output(output_path);
+    if (!output.is_open()) throw std::runtime_error("Error while opening csv output power distribution file.");
+
+    output << "global_pin_col,global_pin_row,axial_layer,assembly_col,assembly_row,local_pin_col,local_pin_row,material_id,raw_power,normalized_power\n";
+    output << std::setprecision(16);
+
+    for (unsigned int axial_layer = 0; axial_layer < n_axial_layers; ++axial_layer)
+      for (unsigned int row = 0; row < n_pin_rows; ++row)
+        for (unsigned int col = 0; col < n_pin_cols; ++col) {
+          const int material_id = geometry_data.get_pin_material_id(row, col, axial_layer);
+          if (material_id == -1)
+            continue;
+
+          const unsigned int assembly_col = col / geometry_data.get_rods_per_assembly_x();
+          const unsigned int assembly_row = row / geometry_data.get_rods_per_assembly_y();
+          const unsigned int local_pin_col = col % geometry_data.get_rods_per_assembly_x();
+          const unsigned int local_pin_row = row % geometry_data.get_rods_per_assembly_y();
+          const double raw_power = global_pin_power[flatten_pin(col, row, axial_layer)];
+          const double normalized_power = (mean_nonzero_power > 0.0) ? raw_power / mean_nonzero_power : 0.0;
+
+          output << col << ','
+            << row << ','
+            << axial_layer << ','
+            << assembly_col << ','
+            << assembly_row << ','
+            << local_pin_col << ','
+            << local_pin_row << ','
+            << material_id << ','
+            << raw_power << ','
+            << normalized_power << '\n';
+        }
+  }
+
+
   void NeutronSolver::run() {
 
     {
@@ -514,6 +664,9 @@ namespace solver {
     // Print results
     for (unsigned int group = 0; group < material_data.get_n_groups(); ++group)
       energy_groups[group]->output_results();
+
+    if (parameters.output_power_distribution)
+      write_power_distribution();
     
   }
 

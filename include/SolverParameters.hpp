@@ -27,6 +27,8 @@ namespace solver {
     std::string output_prefix = "data";
     std::string fe_type = "DG";
     std::string h_ref_type = "none";
+    bool output_power_distribution = true;
+    std::string power_quantity = "fission source";
 
     unsigned int n_cycles = 2;
     unsigned int max_p_degree = 5;
@@ -49,6 +51,8 @@ namespace solver {
       prm.declare_entry("Benchmark", benchmark, dealii::Patterns::Anything(), "Benchmark name used as input path and default output prefix.");
       prm.declare_entry("Output directory", output_directory, dealii::Patterns::Anything(), "Directory for VTU output files. The solver does not create this directory.");
       prm.declare_entry("FE type", fe_type, dealii::Patterns::Selection("DG|CG"), "Finite element family.");
+      prm.declare_entry("Output power distribution", output_power_distribution ? "true" : "false", dealii::Patterns::Bool(), "Whether to write the final pin-power CSV.");
+      prm.declare_entry("Power Quantity", power_quantity, dealii::Patterns::Selection("fission source|fission rate"), "Pin-power quantity: fission source uses nu_sigma_f; fission rate uses sigma_f.");
       
       prm.declare_entry("Refinement cycles", std::to_string(n_cycles), dealii::Patterns::Integer(1), "Number of solve/adapt cycles.");
       prm.declare_entry("Max polynomial degree", std::to_string(max_p_degree), dealii::Patterns::Integer(1), "Maximum group-global p degree used by adaptive p-refinement.");
@@ -76,6 +80,8 @@ namespace solver {
       benchmark = prm.get("Benchmark");
       output_directory = prm.get("Output directory");
       fe_type = prm.get("FE type");
+      output_power_distribution = prm.get_bool("Output power distribution");
+      power_quantity = prm.get("Power Quantity");
       
       n_cycles = static_cast<unsigned int>(prm.get_integer("Refinement cycles"));
       max_p_degree = static_cast<unsigned int>(prm.get_integer("Max polynomial degree"));
@@ -103,6 +109,7 @@ namespace solver {
       if (benchmark.empty()) throw std::runtime_error("SolverParameters: Benchmark name must not be empty.");
       if (output_directory.empty()) output_directory = ".";
       if (fe_type != "DG" && fe_type != "CG") throw std::runtime_error("SolverParameters: FE type must be either DG or CG.");
+      if (power_quantity != "fission source" && power_quantity != "fission rate") throw std::runtime_error("SolverParameters: Power Quantity must be either 'fission source' or 'fission rate'.");
 
       if (coarse_p_coarsening_sequence_string == "bisect") coarse_p_coarsening_sequence = dealii::MGTransferGlobalCoarseningTools::PolynomialCoarseningSequenceType::bisect;
       else if (coarse_p_coarsening_sequence_string == "decrease_by_one") coarse_p_coarsening_sequence = dealii::MGTransferGlobalCoarseningTools::PolynomialCoarseningSequenceType::decrease_by_one;
