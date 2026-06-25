@@ -13,6 +13,7 @@
 #include <deal.II/grid/grid_tools_topology.h>
 #include <deal.II/distributed/grid_refinement.h>
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <mpi.h>
@@ -68,16 +69,12 @@ namespace solver {
     for (unsigned int k = 0; k < n_cells_z; ++k) {
       for (unsigned int j = 0; j < n_cells_y; ++j) {
         for (unsigned int i = 0; i < n_cells_x; ++i) {
-          const unsigned int ax = i / rods_per_assembly_x;
-          const unsigned int cx = i % rods_per_assembly_x;
-          const unsigned int ay = j / rods_per_assembly_y;
-          const unsigned int cy = j % rods_per_assembly_y;
           const unsigned int az = k; 
 
           // Retreive material id
-          const unsigned int mapped_ay = (core_n_assemblies_y - 1) - ay;
-          const unsigned int mapped_cy = (rods_per_assembly_y - 1) - cy;
-          int mat_id = geometry_data.get_assembly_pin(geometry_data.get_core_map(mapped_ay, ax, az), mapped_cy, cx);
+          const unsigned int global_pin_col = i;
+          const unsigned int global_pin_row = (n_cells_y - 1) - j;
+          const int mat_id = geometry_data.get_pin_material_id(global_pin_row, global_pin_col, az);
 
           if (mat_id == -1) continue;
 
@@ -137,12 +134,12 @@ namespace solver {
               cell.vertices[1] = cell_vertices[c][1];
               cell.vertices[2] = cell_vertices[c][2];
               cell.vertices[3] = cell_vertices[c][3];
-              cell.material_id = (c < 4) ? ep.moderator_material : mat_id;
+              cell.material_id = (c < 4) ? ep.moderator_material : static_cast<types::material_id>(mat_id);
               cells.push_back(cell);
             }
           } else {
             CellData<dim> cell;
-            cell.material_id = mat_id;
+            cell.material_id = static_cast<types::material_id>(mat_id);
 
             if constexpr (dim == 1) {
               cell.vertices[0] = get_or_create_vertex(i * pin_pitch_x, 0, 0); // Left

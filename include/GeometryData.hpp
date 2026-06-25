@@ -4,8 +4,10 @@
 #include <nlohmann/json.hpp>
 
 #include <fstream>
+#include <map>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace data {
   using namespace dealii;
@@ -78,6 +80,10 @@ namespace data {
     const ExplicitPinsData& get_explicit_pins_data() const { return explicit_pins; }
 
     unsigned int get_n_assemblies() const { return static_cast<unsigned int>(assembly_name_to_index.size()); }
+    
+    unsigned int get_total_pin_rows() const { return core_n_assemblies_y * rods_per_assembly_y; }
+    unsigned int get_total_pin_cols() const { return core_n_assemblies_x * rods_per_assembly_x; }
+    unsigned int get_total_pin_count() const { return get_total_pin_cols() * get_total_pin_rows() * get_core_n_assemblies_z(); }
  
     unsigned int get_assembly_index(const std::string &name) const {
       auto it = assembly_name_to_index.find(name);
@@ -86,12 +92,28 @@ namespace data {
       return it->second;
     }
 
-    unsigned int get_assembly_pin(unsigned int assembly_idx, unsigned int row, unsigned int col) const {
+    int get_assembly_pin(unsigned int assembly_idx, unsigned int row, unsigned int col) const {
       return assemblies[assembly_idx][row][col];
     }
 
-    unsigned int get_assembly_pin(const std::string &assembly_name, unsigned int row, unsigned int col) const {
+    int get_assembly_pin(const std::string &assembly_name, unsigned int row, unsigned int col) const {
       return assemblies[get_assembly_index(assembly_name)][row][col];
+    }
+
+    int get_pin_material_id(unsigned int global_pin_row, unsigned int global_pin_col, unsigned int axial_layer) const {
+      if (global_pin_col >= get_total_pin_cols())
+        throw std::runtime_error("GeometryData: global pin column " + std::to_string(global_pin_col) + " is out of range.");
+      if (global_pin_row >= get_total_pin_rows())
+        throw std::runtime_error("GeometryData: global pin row " + std::to_string(global_pin_row) + " is out of range.");
+      if (axial_layer >= core_n_assemblies_z)
+        throw std::runtime_error("GeometryData: axial layer " + std::to_string(axial_layer) + " is out of range.");
+
+      const unsigned int assembly_col = global_pin_col / rods_per_assembly_x;
+      const unsigned int local_pin_col = global_pin_col % rods_per_assembly_x;
+      const unsigned int assembly_row = global_pin_row / rods_per_assembly_y;
+      const unsigned int local_pin_row = global_pin_row % rods_per_assembly_y;
+
+      return get_assembly_pin(get_core_map(assembly_row, assembly_col, axial_layer), local_pin_row, local_pin_col);
     }
 
     unsigned int get_core_map(unsigned int row, unsigned int col, unsigned int z) const {
@@ -118,7 +140,7 @@ namespace data {
 
     ExplicitPinsData explicit_pins;
 
-    Table<3, unsigned int> assemblies;
+    Table<3, int> assemblies;
     Table<3, unsigned int> core_map;
 
     std::map<std::string, unsigned int> assembly_name_to_index;
@@ -160,7 +182,7 @@ namespace data {
             throw std::runtime_error("GeometryData: assembly '" + name + "' row " + std::to_string(row) + " has " + std::to_string(row_data.size()) + " entries, expected " + std::to_string(rods_per_assembly_x) + ".");
 
           for (unsigned int col = 0; col < rods_per_assembly_x; ++col)
-            assemblies[idx][row][col] = row_data[col].get<unsigned int>();
+            assemblies[idx][row][col] = row_data[col].get<int>();
         }
       }
     }
