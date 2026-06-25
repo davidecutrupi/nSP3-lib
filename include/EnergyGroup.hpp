@@ -92,7 +92,7 @@ namespace solver {
 
     BlockVectorType<double>& get_solution() { return solution; }
     const BlockVectorType<double>& get_solution() const { return solution; }
-    BlockVectorType<double> get_adjoint_solution() const;
+    const BlockVectorType<double>& get_adjoint_solution() const { return adjoint_solution; }
 
 
   private:

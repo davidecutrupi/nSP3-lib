@@ -670,12 +670,6 @@ namespace solver {
 
 
   template <unsigned int dim>
-  LinearAlgebra::distributed::BlockVector<double> EnergyGroup<dim>::get_adjoint_solution() const { 
-    return adjoint_solution;
-  }
-
-
-  template <unsigned int dim>
   void EnergyGroup<dim>::set_degree(unsigned int new_degree) { 
     TimerOutput::Scope t(GlobalTimer::get(), "EnergyGroup::HP::prepare-p");
     if (p_degree != new_degree) {
