@@ -23,8 +23,12 @@ subsection Group solver
 end
 
 subsection Multigrid
-  set Coarse direct KLU max dofs = 10000
   set Coarse p-coarsening min dofs = 75000
   set Coarse p-coarsening min degree = 3
   set Coarse p-coarsening sequence = bisect
+
+  set Coarse direct KLU max dofs = 10000
+  set MUMPS ICNTL(14) = 50
+  set MUMPS ICNTL(4) = -1
+  set MUMPS out of core = false
 end

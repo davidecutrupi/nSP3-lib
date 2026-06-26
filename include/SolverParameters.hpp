@@ -42,11 +42,14 @@ namespace solver {
     unsigned int group_max_iterations = 1000;
     double group_tolerance = 1e-8;
 
-    dealii::types::global_dof_index coarse_direct_klu_max_dofs = 10000;
     dealii::types::global_dof_index coarse_p_coarsening_min_dofs = 75000;
     unsigned int coarse_p_coarsening_min_degree = 3;
     std::string coarse_p_coarsening_sequence_string = "bisect";
     dealii::MGTransferGlobalCoarseningTools::PolynomialCoarseningSequenceType coarse_p_coarsening_sequence = dealii::MGTransferGlobalCoarseningTools::PolynomialCoarseningSequenceType::bisect;
+    dealii::types::global_dof_index coarse_direct_klu_max_dofs = 10000;
+    unsigned int mumps_icntl_14 = 50;
+    int mumps_icntl_4 = -1;
+    bool mumps_out_of_core = false;
 
 
   private:
@@ -75,10 +78,13 @@ namespace solver {
       prm.leave_subsection();
 
       prm.enter_subsection("Multigrid");
-      prm.declare_entry("Coarse direct KLU max dofs", std::to_string(coarse_direct_klu_max_dofs), dealii::Patterns::Integer(0), "Use Amesos_Klu for coarse matrices below this monolithic size; use Amesos_Mumps at or above it.");
       prm.declare_entry("Coarse p-coarsening min dofs", std::to_string(coarse_p_coarsening_min_dofs), dealii::Patterns::Integer(0), "Enable p-coarsened coarse levels when the h-coarsest monolithic matrix exceeds this size.");
       prm.declare_entry("Coarse p-coarsening min degree", std::to_string(coarse_p_coarsening_min_degree), dealii::Patterns::Integer(1), "Minimum active polynomial degree for adding p-coarsened coarse levels.");
       prm.declare_entry("Coarse p-coarsening sequence", coarse_p_coarsening_sequence_string, dealii::Patterns::Selection("bisect|decrease_by_one|go_to_one"), "Polynomial coarsening sequence for extra coarse levels.");
+      prm.declare_entry("Coarse direct KLU max dofs", std::to_string(coarse_direct_klu_max_dofs), dealii::Patterns::Integer(0), "Use Amesos_Klu for coarse matrices below this monolithic size; use Amesos_Mumps at or above it.");
+      prm.declare_entry("MUMPS ICNTL(14)", std::to_string(mumps_icntl_14), dealii::Patterns::Integer(0), "Percentage increase in the estimated working space for MUMPS.");
+      prm.declare_entry("MUMPS ICNTL(4)", std::to_string(mumps_icntl_4), dealii::Patterns::Integer(), "Level of printing for MUMPS (-1=none).");
+      prm.declare_entry("MUMPS out of core", mumps_out_of_core ? "true" : "false", dealii::Patterns::Bool(), "Enable Out-of-Core facility in MUMPS to save RAM by writing to disk.");
       prm.leave_subsection();
     }
 
@@ -107,10 +113,13 @@ namespace solver {
       prm.leave_subsection();
 
       prm.enter_subsection("Multigrid");
-      coarse_direct_klu_max_dofs = static_cast<dealii::types::global_dof_index>(prm.get_integer("Coarse direct KLU max dofs"));
       coarse_p_coarsening_min_dofs = static_cast<dealii::types::global_dof_index>(prm.get_integer("Coarse p-coarsening min dofs"));
       coarse_p_coarsening_min_degree = static_cast<unsigned int>(prm.get_integer("Coarse p-coarsening min degree"));
       coarse_p_coarsening_sequence_string = prm.get("Coarse p-coarsening sequence");
+      coarse_direct_klu_max_dofs = static_cast<dealii::types::global_dof_index>(prm.get_integer("Coarse direct KLU max dofs"));
+      mumps_icntl_14 = static_cast<unsigned int>(prm.get_integer("MUMPS ICNTL(14)"));
+      mumps_icntl_4 = static_cast<int>(prm.get_integer("MUMPS ICNTL(4)"));
+      mumps_out_of_core = prm.get_bool("MUMPS out of core");
       prm.leave_subsection();
     }
 

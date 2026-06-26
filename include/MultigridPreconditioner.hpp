@@ -26,7 +26,7 @@ namespace solver {
     typename VectorType = dealii::LinearAlgebra::distributed::Vector<number>,
     typename TransferType = MGTransferGlobalCoarsening<dim, number>,
     typename SmootherPreconditionerType = dealii::DiagonalMatrix<VectorType>,
-    typename CoarseWrapperType = MGCoarseGridTrilinosWrapper<dim, VectorType>>
+    typename CoarseWrapperType = MGCoarseGridTrilinosWrapper<dim, number>>
   class MultigridPreconditioner {
   public:
     using SmootherType = dealii::PreconditionChebyshev<OperatorType, VectorType, SmootherPreconditionerType>;
@@ -34,7 +34,7 @@ namespace solver {
     MultigridPreconditioner() = default;
 
     void clear();
-    void initialize(const dealii::DoFHandler<dim> &, const std::vector<std::shared_ptr<OperatorType>> &, const std::vector<std::shared_ptr<dealii::DoFHandler<dim>>> &, std::shared_ptr<TransferType>, const dealii::AffineConstraints<number> &, const CoarseSolverPolicy &  = CoarseSolverPolicy());
+    void initialize(const dealii::DoFHandler<dim> &, const std::vector<std::shared_ptr<OperatorType>> &, const std::vector<std::shared_ptr<dealii::DoFHandler<dim>>> &, std::shared_ptr<TransferType>, const dealii::AffineConstraints<number> &, const CoarseSolverPolicy &);
     template <typename OtherVectorType> void vmult(OtherVectorType &, const OtherVectorType &) const;
     template <typename OtherVectorType> void Tvmult(OtherVectorType &, const OtherVectorType &) const;
 

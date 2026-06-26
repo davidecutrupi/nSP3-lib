@@ -279,7 +279,7 @@ namespace solver {
       level_zero_operators[level]->initialize_dof_vector(vector);
     });
 
-    const CoarseSolverPolicy coarse_solver_policy{parameters.coarse_direct_klu_max_dofs};
+    const CoarseSolverPolicy coarse_solver_policy(parameters);
 
     inner_preconditioner_zero = std::make_shared<InnerPreconditionerZero>();
     inner_preconditioner_second = std::make_shared<InnerPrecontionerSecond>();
@@ -330,7 +330,7 @@ namespace solver {
       level_sp3_operators[level]->initialize_dof_vector(vector);
     });
 
-    const CoarseSolverPolicy coarse_solver_policy{parameters.coarse_direct_klu_max_dofs};
+    const CoarseSolverPolicy coarse_solver_policy(parameters);
 
     coupled_mg_preconditioner = std::make_shared<CoupledMGPreconditioner>();
     coupled_mg_preconditioner->initialize(dof_handler, level_sp3_operators, mg_level_dof_handlers, mg_transfer, *mg_level_constraints[0], coarse_solver_policy);

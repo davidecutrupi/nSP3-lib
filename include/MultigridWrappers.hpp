@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SP3Operator.hpp"
+#include "SolverParameters.hpp"
 
 #include <deal.II/base/exception_macros.h>
 #include <deal.II/base/mg_level_object.h>
@@ -23,6 +24,11 @@
 #include <deal.II/multigrid/mg_transfer_global_coarsening.h>
 #include <deal.II/multigrid/mg_transfer_matrix_free.h>
 
+#include <Amesos.h>
+#include <Amesos_BaseSolver.h>
+#include <Epetra_LinearProblem.h>
+#include <Teuchos_ParameterList.hpp>
+
 #include <functional>
 #include <array>
 #include <vector>
@@ -34,11 +40,21 @@
 namespace solver {
 
   struct CoarseSolverPolicy {
-    explicit CoarseSolverPolicy(const dealii::types::global_dof_index klu_max_dofs = 10000)
-      : klu_max_dofs(klu_max_dofs)
+    CoarseSolverPolicy() {}
+
+    CoarseSolverPolicy(const SolverParameters &parameters) : 
+      klu_max_dofs(parameters.coarse_direct_klu_max_dofs),
+      mumps_icntl_14(parameters.mumps_icntl_14),
+      mumps_icntl_4(parameters.mumps_icntl_4),
+      mumps_out_of_core(parameters.mumps_out_of_core)
     {}
 
-    dealii::types::global_dof_index klu_max_dofs;
+    dealii::types::global_dof_index klu_max_dofs = 10000;
+
+    // MUMPS params
+    int mumps_icntl_14 = 100;
+    int mumps_icntl_4 = -1;
+    bool mumps_out_of_core = false;
 
     std::string direct_solver_type(const dealii::types::global_dof_index matrix_size) const {
       return matrix_size < klu_max_dofs ? "Amesos_Klu" : "Amesos_Mumps";
@@ -76,23 +92,45 @@ namespace solver {
   };
 
 
-  template <unsigned int dim, typename VectorType>
-  class MGCoarseGridTrilinosWrapper : public dealii::MGCoarseGridBase<VectorType> {
+  template <unsigned int dim, typename number>
+  class MGCoarseGridTrilinosWrapper : public dealii::MGCoarseGridBase<dealii::LinearAlgebra::distributed::Vector<number>> {
   public:
+    using VectorType = dealii::LinearAlgebra::distributed::Vector<number>;
+
     MGCoarseGridTrilinosWrapper() = default;
 
-    void initialize(const dealii::TrilinosWrappers::SparseMatrix &coarse_matrix, const CoarseSolverPolicy &policy) {
-      dealii::TrilinosWrappers::SolverDirect::AdditionalData data;
-      data.solver_type = policy.direct_solver_type(coarse_matrix.m());
-      direct_solver.initialize(coarse_matrix, data);
-    }
+    void initialize(const dealii::TrilinosWrappers::SparseMatrix &coarse_matrix, const dealii::DoFHandler<dim> &dof_handler, const CoarseSolverPolicy &policy) {
+      const dealii::IndexSet locally_owned_dofs = dof_handler.locally_owned_dofs();
+      temp_src_double.reinit(locally_owned_dofs, MPI_COMM_WORLD);
+      temp_dst_double.reinit(locally_owned_dofs, MPI_COMM_WORLD);
 
-    void initialize(const dealii::TrilinosWrappers::SparseMatrix &coarse_matrix) {
-      initialize(coarse_matrix, CoarseSolverPolicy());
-    }
+      // Setup the linear problem
+      linear_problem = std::make_unique<Epetra_LinearProblem>();
+      linear_problem->SetOperator(const_cast<Epetra_CrsMatrix *>(&coarse_matrix.trilinos_matrix()));
 
-    void initialize(const dealii::TrilinosWrappers::SparseMatrix &coarse_matrix, const dealii::DoFHandler<dim> &, const CoarseSolverPolicy &policy) {
-      initialize(coarse_matrix, policy);
+      // Setup the solver
+      direct_solver_type = policy.direct_solver_type(coarse_matrix.m());
+      Amesos factory;
+      AssertThrow(factory.Query(direct_solver_type.c_str()), dealii::ExcMessage(direct_solver_type + " is not available in Trilinos."));
+      direct_solver.reset(factory.Create(direct_solver_type.c_str(), *linear_problem));
+      AssertThrow(direct_solver != nullptr, dealii::ExcMessage("Failed to create solver" + direct_solver_type));
+
+      // Additional params for Mumps
+      Teuchos::ParameterList params;
+      if (direct_solver_type == "Amesos_Mumps") {
+        Teuchos::ParameterList &mumps_params = params.sublist("mumps");  
+        mumps_params.set("ICNTL(14)", policy.mumps_icntl_14); // MUMPS memory relaxation.
+        mumps_params.set("ICNTL(4)", policy.mumps_icntl_4); // MUMPS output level. -1 or 0 keeps it quiet.
+        if (policy.mumps_out_of_core) // Out of core.
+          mumps_params.set("ICNTL(22)", 1);
+      }
+
+      // Factorize
+      int ierr = direct_solver->SetParameters(params);
+      ierr = direct_solver->SymbolicFactorization();
+      AssertThrow(ierr == 0, dealii::ExcMessage("SymbolicFactorization failed."));
+      ierr = direct_solver->NumericFactorization();
+      AssertThrow(ierr == 0, dealii::ExcMessage("NumericFactorization failed."));
     }
 
     void initialize(const dealii::TrilinosWrappers::SparseMatrix &coarse_matrix, const dealii::DoFHandler<dim> &dof_handler) {
@@ -101,21 +139,34 @@ namespace solver {
 
     virtual void operator()(const unsigned int level, VectorType &dst, const VectorType &src) const override {
       (void) level;
-      if (temp_src_double.size() == 0) {
-        temp_src_double.reinit(src, true);
-        temp_dst_double.reinit(dst, true);
-      }
 
-      temp_src_double = src;
-      direct_solver.vmult(temp_dst_double, temp_src_double);
-      dst = temp_dst_double;
+      const auto n_local = src.locally_owned_size();
+
+      // Fast copy onto the dealii vector
+      double *start = temp_src_double.begin();
+      for (dealii::types::global_dof_index i = 0; i < n_local; ++i)
+        start[i] = static_cast<double>(src.local_element(i));
+            
+      // Solve
+      linear_problem->SetLHS(&temp_dst_double.trilinos_vector());
+      linear_problem->SetRHS(&temp_src_double.trilinos_vector());
+      const int ierr = direct_solver->Solve();
+      AssertThrow(ierr == 0, dealii::ExcMessage("Amesos coarse direct solve failed."));
+
+      // Fast copy onto the dst vector
+      start = temp_dst_double.begin();
+      for (dealii::types::global_dof_index i = 0; i < n_local; ++i)
+        dst.local_element(i) = static_cast<number>(start[i]);
     }
 
   private:
-    dealii::TrilinosWrappers::SolverDirect direct_solver;
+    std::unique_ptr<Epetra_LinearProblem> linear_problem;
+    std::unique_ptr<Amesos_BaseSolver> direct_solver;
+    std::string direct_solver_type;
+
     // This solver only supports doubles
-    mutable dealii::LinearAlgebra::distributed::Vector<double> temp_src_double;
-    mutable dealii::LinearAlgebra::distributed::Vector<double> temp_dst_double;
+    mutable dealii::TrilinosWrappers::MPI::Vector temp_src_double;
+    mutable dealii::TrilinosWrappers::MPI::Vector temp_dst_double;
   };
 
 
@@ -138,9 +189,33 @@ namespace solver {
       temp_src_double.reinit(monolithic_owned, MPI_COMM_WORLD);
       temp_dst_double.reinit(monolithic_owned, MPI_COMM_WORLD);
 
-      dealii::TrilinosWrappers::SolverDirect::AdditionalData data;
-      data.solver_type = policy.direct_solver_type(coarse_matrix.m());
-      direct_solver.initialize(coarse_matrix, data);
+      // Setup the linear problem
+      linear_problem = std::make_unique<Epetra_LinearProblem>();
+      linear_problem->SetOperator(const_cast<Epetra_CrsMatrix *>(&coarse_matrix.trilinos_matrix()));
+
+      // Setup the solver
+      direct_solver_type = policy.direct_solver_type(coarse_matrix.m());
+      Amesos factory;
+      AssertThrow(factory.Query(direct_solver_type.c_str()), dealii::ExcMessage(direct_solver_type + " is not available in Trilinos."));
+      direct_solver.reset(factory.Create(direct_solver_type.c_str(), *linear_problem));
+      AssertThrow(direct_solver != nullptr, dealii::ExcMessage("Failed to create solver" + direct_solver_type));
+
+      // Additional params for Mumps
+      Teuchos::ParameterList params;
+      if (direct_solver_type == "Amesos_Mumps") {
+        Teuchos::ParameterList &mumps_params = params.sublist("mumps");  
+        mumps_params.set("ICNTL(14)", policy.mumps_icntl_14); // MUMPS memory relaxation.
+        mumps_params.set("ICNTL(4)", policy.mumps_icntl_4); // MUMPS output level. -1 or 0 keeps it quiet.
+        if (policy.mumps_out_of_core) // Out of core.
+          mumps_params.set("ICNTL(22)", 1);
+      }
+
+      // Factorize
+      int ierr = direct_solver->SetParameters(params);
+      ierr = direct_solver->SymbolicFactorization();
+      AssertThrow(ierr == 0, dealii::ExcMessage("SymbolicFactorization failed."));
+      ierr = direct_solver->NumericFactorization();
+      AssertThrow(ierr == 0, dealii::ExcMessage("NumericFactorization failed."));
     }
 
     void initialize(const dealii::TrilinosWrappers::SparseMatrix &coarse_matrix, const dealii::DoFHandler<dim> &dof_handler) {
@@ -165,7 +240,10 @@ namespace solver {
       }
 
       // Solve
-      direct_solver.vmult(temp_dst_double, temp_src_double);
+      linear_problem->SetLHS(&temp_dst_double.trilinos_vector());
+      linear_problem->SetRHS(&temp_src_double.trilinos_vector());
+      const int ierr = direct_solver->Solve();
+      AssertThrow(ierr == 0, dealii::ExcMessage("Amesos coarse direct solve failed."));
 
       // Fast copy onto the dst block vector
       start = temp_dst_double.begin();
@@ -177,7 +255,11 @@ namespace solver {
 
   private:
     dealii::types::global_dof_index scalar_size = 0;
-    dealii::TrilinosWrappers::SolverDirect direct_solver;
+
+    std::unique_ptr<Epetra_LinearProblem> linear_problem;
+    std::unique_ptr<Amesos_BaseSolver> direct_solver;
+    std::string direct_solver_type;
+    
     mutable dealii::TrilinosWrappers::MPI::Vector temp_src_double;
     mutable dealii::TrilinosWrappers::MPI::Vector temp_dst_double;
   };
