@@ -607,6 +607,14 @@ namespace solver {
       pcout << "Number of active cells: " << triangulation->n_global_active_cells() << std::endl;
 
       setup_groups();
+
+      for (unsigned int group = 0; group < energy_groups.size(); ++group) {
+        const auto scalar_dofs = energy_groups[group]->get_dof_handler().n_dofs();
+        pcout << "Group " << group
+              << " DoFs: scalar=" << scalar_dofs
+              << " | SP3 unknowns=" << 2 * scalar_dofs
+              << std::endl;
+      }
       
       // Solve forward problem
       {
