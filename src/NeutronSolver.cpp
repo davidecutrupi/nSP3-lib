@@ -23,7 +23,8 @@
 namespace solver {
   using namespace dealii;
 
-  void NeutronSolver::init_mesh() {
+  template <unsigned int dim>
+  void NeutronSolver<dim>::init_mesh() {
     TimerOutput::Scope t(GlobalTimer::get(), "Generate mesh");
 
     const unsigned int core_n_assemblies_x = geometry_data.get_core_n_assemblies_x();
@@ -259,7 +260,8 @@ namespace solver {
   }
 
 
-  void NeutronSolver::setup_groups() {
+  template <unsigned int dim>
+  void NeutronSolver<dim>::setup_groups() {
     TimerOutput::Scope t(GlobalTimer::get(), "Setup groups");
 
     // Setup and collect all dof handlers and quadratures
@@ -289,7 +291,8 @@ namespace solver {
   }
 
 
-  double NeutronSolver::get_total_fission_source(bool is_adjoint) const {
+  template <unsigned int dim>
+  double NeutronSolver<dim>::get_total_fission_source(bool is_adjoint) const {
     double local_fission = 0.0;
     for (const auto &group : energy_groups)
       local_fission += group->get_fission_source(is_adjoint);
@@ -298,7 +301,8 @@ namespace solver {
   }
 
 
-  void NeutronSolver::solve_eigenvalue_problem(bool is_adjoint) {
+  template <unsigned int dim>
+  void NeutronSolver<dim>::solve_eigenvalue_problem(bool is_adjoint) {
     const double tol = parameters.eigen_tolerance;
     const unsigned int maxiter = parameters.eigen_max_iterations;
     double error = 1.0;
@@ -358,7 +362,8 @@ namespace solver {
   }
 
 
-  void NeutronSolver::compute_weighted_error(ErrorEstimates &estimates, const bool use_goal_oriented_estimator) const {
+  template <unsigned int dim>
+  void NeutronSolver<dim>::compute_weighted_error(ErrorEstimates &estimates, const bool use_goal_oriented_estimator) const {
     TimerOutput::Scope t(GlobalTimer::get(), "NeutronSolver::EstimateError");
 
     estimates.global_group_errors.resize(energy_groups.size(), 0.0);
@@ -425,7 +430,8 @@ namespace solver {
   }
 
 
-  void NeutronSolver::write_power_distribution() {
+  template <unsigned int dim>
+  void NeutronSolver<dim>::write_power_distribution() {
     TimerOutput::Scope t(GlobalTimer::get(), "NeutronSolver::Output::PinPower");
 
     const unsigned int n_pin_cols = geometry_data.get_total_pin_cols();
@@ -574,7 +580,8 @@ namespace solver {
   }
 
 
-  void NeutronSolver::run() {
+  template <unsigned int dim>
+  void NeutronSolver<dim>::run() {
 
     {
       const unsigned int n_mpi_procs = Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
@@ -692,3 +699,7 @@ namespace solver {
   }
 
 }
+
+template class solver::NeutronSolver<1u>;
+template class solver::NeutronSolver<2u>;
+template class solver::NeutronSolver<3u>;

@@ -29,16 +29,15 @@ namespace solver {
     dealii::Vector<float> h_refinement_estimators; 
   };
 
-  constexpr unsigned int dim = 2;
-
+  template <unsigned int dim>
   class NeutronSolver {
   public:
     using BlockVectorType = dealii::LinearAlgebra::distributed::BlockVector<double>;
     
-    NeutronSolver(const SolverParameters &parameters) :
+    NeutronSolver(const std::string &benchmark_path, const SolverParameters &parameters) :
       parameters(parameters),
-      material_data(data::MaterialData::from_file("../benchmarks/" + parameters.benchmark + ".json")),
-      geometry_data(data::GeometryData::from_file("../benchmarks/" + parameters.benchmark + ".json")),
+      material_data(data::MaterialData::from_file(benchmark_path)),
+      geometry_data(data::GeometryData::from_file(benchmark_path)),
       mpi_size(dealii::Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)),
       mpi_rank(dealii::Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)),
       pcout(std::cout, mpi_rank == 0)

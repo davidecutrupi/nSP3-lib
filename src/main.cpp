@@ -1,6 +1,9 @@
 #include "GlobalTimer.hpp"
 #include "NeutronSolver.hpp"
 
+#include <stdexcept>
+#include <string>
+
 
 int main(int argc, char **argv) {
   try {
@@ -8,8 +11,23 @@ int main(int argc, char **argv) {
 
     {
       const solver::SolverParameters parameters;
-      solver::NeutronSolver neutron_solver(parameters);
-      neutron_solver.run();
+      const std::string benchmark_path = "../benchmarks/" + parameters.benchmark + ".json";
+      const unsigned int dimension = data::GeometryData::read_dimension_from_file(benchmark_path);
+
+      if (dimension == 1) {
+        solver::NeutronSolver<1u> neutron_solver(benchmark_path, parameters);
+        neutron_solver.run();
+      }
+      else if (dimension == 2) {
+        solver::NeutronSolver<2u> neutron_solver(benchmark_path, parameters);
+        neutron_solver.run();
+      }
+      else if (dimension == 3) {
+        solver::NeutronSolver<3u> neutron_solver(benchmark_path, parameters);
+        neutron_solver.run();
+      }
+      else
+        throw std::runtime_error("Unsupported dimension");
     }
 
     GlobalTimer::clear();
