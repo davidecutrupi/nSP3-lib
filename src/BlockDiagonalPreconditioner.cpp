@@ -15,30 +15,40 @@ namespace solver {
 
 
   template <typename number>
-  void BlockDiagonalPreconditioner<number>::initialize(const VectorType &diag00, const VectorType &diag02, const VectorType &diag22) {
-    inv00.reinit(diag00, true);
-    inv02.reinit(diag00, true);
-    inv22.reinit(diag00, true);
+  void BlockDiagonalPreconditioner<number>::initialize(const VectorType &diag00, const VectorType &diag02, const VectorType &diag22, const IndexSet &constrained_dofs) {
+    const IndexSet &owned = diag00.locally_owned_elements();
+    inv00.reinit(owned, MPI_COMM_WORLD);
+    inv02.reinit(owned, MPI_COMM_WORLD);
+    inv22.reinit(owned, MPI_COMM_WORLD);
+
+    unsigned int i = 0;
 
     // Compute the inverse of the 2x2 local matrix
-    for (unsigned int i = 0; i < diag00.locally_owned_size(); ++i) {
-      const number a00 = diag00.local_element(i);
-      const number a02 = diag02.local_element(i);
-      const number a22 = diag22.local_element(i);
-      const number determinant = a00 * a22 - a02 * a02;
+    for (const auto global_dof : owned) {
+      const bool constrained = constrained_dofs.is_element(global_dof);
 
-      AssertThrow(a00 > number(0.0), ExcMessage("Non-positive SP3 zero-mode diagonal in block diagonal setup."));
-      AssertThrow(a22 > number(0.0), ExcMessage("Non-positive SP3 second-mode diagonal in block diagonal setup."));
-      AssertThrow(determinant > number(0.0), ExcMessage("Singular or indefinite local SP3 2x2 diagonal block."));
+      if (constrained) { // The DoF is constrained and hasn't a physical meaning
+        inv00.local_element(i) = number(1.0);
+        inv02.local_element(i) = number(0.0);
+        inv22.local_element(i) = number(1.0);
+      }
+      else {
+        const number a00 = diag00.local_element(i);
+        const number a02 = diag02.local_element(i);
+        const number a22 = diag22.local_element(i);
+        const number determinant = a00 * a22 - a02 * a02;
 
-      inv00.local_element(i) = a22 / determinant;
-      inv02.local_element(i) = -a02 / determinant;
-      inv22.local_element(i) = a00 / determinant;
+        AssertThrow(a00 > number(0.0), ExcMessage("Non-positive SP3 zero-mode diagonal in block diagonal setup."));
+        AssertThrow(a22 > number(0.0), ExcMessage("Non-positive SP3 second-mode diagonal in block diagonal setup."));
+        AssertThrow(determinant > number(0.0), ExcMessage("Singular or indefinite local SP3 2x2 diagonal block."));
+
+        inv00.local_element(i) = a22 / determinant;
+        inv02.local_element(i) = -a02 / determinant;
+        inv22.local_element(i) = a00 / determinant;
+      }
+
+      ++i;
     }
-
-    inv00.update_ghost_values();
-    inv02.update_ghost_values();
-    inv22.update_ghost_values();
   }
 
 

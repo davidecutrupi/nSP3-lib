@@ -86,7 +86,7 @@ namespace solver {
 
     // Setup SP3 operator
     sp3_operator = std::make_shared<SP3Operator<dim, double>>(p_degree, group, group, geometry_data, use_interior_face_terms);
-    sp3_operator->initialize(system_mf_storage, material_manager->get_cache(0), material_data);
+    sp3_operator->initialize(system_mf_storage, material_manager->get_cache(0), material_data, constraints);
 
     sp3_operator->initialize_dof_vector(solution);
     sp3_operator->initialize_dof_vector(solution_old);
@@ -321,7 +321,7 @@ namespace solver {
   
         // Create the SP3 level operator and add to level_operators
         level_sp3_operators[level] = std::make_shared<SP3Operator<dim, float>>(level_p_degree, 0, group, geometry_data, use_interior_face_terms);
-        level_sp3_operators[level]->initialize(mg_mf_storage, mg_material_manager->get_cache(level), material_data);
+        level_sp3_operators[level]->initialize(mg_mf_storage, mg_material_manager->get_cache(level), material_data, *mg_level_constraints[level]);
       }
     }
 

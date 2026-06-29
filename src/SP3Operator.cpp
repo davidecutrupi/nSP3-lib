@@ -16,6 +16,24 @@
 #include <limits>
 
 
+namespace {
+  template <typename number>
+  dealii::IndexSet make_constrained_dofs(const dealii::AffineConstraints<number> &constraints, const dealii::types::global_dof_index n_dofs) {
+    dealii::IndexSet result(n_dofs);
+
+    const dealii::IndexSet &lines = constraints.get_local_lines();
+
+    for (const auto global_dof : lines)
+      if (global_dof < n_dofs)
+        result.add_index(global_dof);
+
+    result.compress();
+
+    return result;
+  }
+}
+
+
 namespace solver {
   using namespace dealii;
   
@@ -28,11 +46,14 @@ namespace solver {
   
   
   template <unsigned int dim, typename number>
-  void SP3Operator<dim, number>::initialize(std::shared_ptr<const MatrixFree<dim, number>> data, std::shared_ptr<const MaterialCache<number>> material_cache, const data::MaterialData &material_data) {
+  void SP3Operator<dim, number>::initialize(std::shared_ptr<const MatrixFree<dim, number>> data, std::shared_ptr<const MaterialCache<number>> material_cache, const data::MaterialData &material_data, const AffineConstraints<number> &constraints) {
     clear();
     this->data = data;
     this->material_cache = material_cache;
     diagonal_is_up_to_date = false;
+
+    const auto n_scalar_dofs = get_vector_partitioner()->size();
+    constrained_dofs = make_constrained_dofs(constraints, n_scalar_dofs);
 
     const unsigned int n_batches = data->n_cell_batches() + data->n_ghost_cell_batches();
     
@@ -590,7 +611,7 @@ namespace solver {
     compute_scalar_diagonal(diag22, 1, 1);
 
     inverse_diagonal = std::make_shared<DiagonalPreconditionerType>();
-    inverse_diagonal->initialize(diag00, diag02, diag22);
+    inverse_diagonal->initialize(diag00, diag02, diag22, constrained_dofs);
 
     // Flag diagonal as updated
     diagonal_is_up_to_date = true;

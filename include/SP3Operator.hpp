@@ -7,6 +7,7 @@
 
 #include <deal.II/base/aligned_vector.h>
 #include <deal.II/base/enable_observer_pointer.h>
+#include <deal.II/base/index_set.h>
 #include <deal.II/base/tensor.h>
 
 #include <deal.II/dofs/dof_handler.h>
@@ -41,7 +42,7 @@ namespace solver {
     {};
 
     void clear();
-    void initialize(std::shared_ptr<const dealii::MatrixFree<dim, number>>, std::shared_ptr<const MaterialCache<number>>, const data::MaterialData &);
+    void initialize(std::shared_ptr<const dealii::MatrixFree<dim, number>>, std::shared_ptr<const MaterialCache<number>>, const data::MaterialData &, const dealii::AffineConstraints<number> &);
     std::shared_ptr<const dealii::Utilities::MPI::Partitioner> get_vector_partitioner() const;
     std::shared_ptr<const dealii::MatrixFree<dim, number>> get_matrix_free() const;
     void initialize_dof_vector(BlockVectorType &) const;
@@ -95,6 +96,8 @@ namespace solver {
     std::shared_ptr<const MaterialCache<number>> material_cache;
     std::shared_ptr<DiagonalPreconditionerType> inverse_diagonal;
     bool diagonal_is_up_to_date;
+
+    dealii::IndexSet constrained_dofs;
   };
 
 
