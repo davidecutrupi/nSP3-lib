@@ -22,15 +22,15 @@ message(STATUS "Build type : ${CMAKE_BUILD_TYPE}")
 message(STATUS "deal.II dir: ${DEAL_II_DIR}")
 
 # Locate Boost.
-find_package(Boost 1.74.0 REQUIRED
-  COMPONENTS filesystem iostreams serialization
-  HINTS ${BOOST_DIR} $ENV{BOOST_DIR} $ENV{mkBoostPrefix})
-message(STATUS "Using the Boost-${Boost_VERSION} configuration found at ${Boost_DIR}")
-message(STATUS)
-include_directories(${Boost_INCLUDE_DIRS})
+#find_package(Boost 1.74.0 REQUIRED
+#  COMPONENTS filesystem iostreams serialization
+#  HINTS ${BOOST_DIR} $ENV{BOOST_DIR} $ENV{mkBoostPrefix})
+#message(STATUS "Using the Boost-${Boost_VERSION} configuration found at ${Boost_DIR}")
+#message(STATUS)
+#include_directories(${Boost_INCLUDE_DIRS})
 
 # Locate deal.II and initialize its variables.
-find_package(deal.II 9.3.1 REQUIRED
+find_package(deal.II 9.7.1 REQUIRED
   HINTS ${DEAL_II_DIR} $ENV{DEAL_II_DIR} $ENV{mkDealiiPrefix})
 deal_ii_initialize_cached_variables()
 
